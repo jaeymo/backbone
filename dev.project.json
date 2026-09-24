@@ -1,0 +1,21 @@
+{
+    "name": "backbone",
+
+    "tree": {
+        "$className": "DataModel",
+        "ReplicatedStorage": {
+            "Packages": {
+                "$path": "Packages",
+                "Backbone": {
+                    "$path": "lib"
+                }
+            }
+        },
+
+        "ServerScriptService": {
+            "testing": {
+                "$path": "testing"
+            }
+        }
+    }
+}
