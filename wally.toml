@@ -1,0 +1,13 @@
+[package]
+name = "jaeymo/backbone"
+description = "A medium-weight game framework, the backbone of your project!"
+version = "0.1.0"
+exclude = ["**"]
+include = ["lib", "lib/**", "wally.toml", "wally.lock", "default.project.json", "LICENSE", "README.md"]
+license = "MIT"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+[dependencies]
+Janitor = "howmanysmall/janitor@1.18.3"
+Signal = "sleitnick/signal@2.0.3"
