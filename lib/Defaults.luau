@@ -62,6 +62,7 @@ local BACKBONE_DEFAULTS: Types.BackboneConfig = {
 	},
 
 	ANIMATION = {
+		DEFAULT_VARIANT_KEY = "Default",
 		MAX_CONCURRENT_MARKER_FETCHES = 3,
 		MARKER_FETCH_RETRIES = 3,
 		MARKER_FETCH_BACKOFF_SECONDS = 0.5, -- Multiplied by attempt number

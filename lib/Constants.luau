@@ -8,4 +8,8 @@ return {
 	-- Keys match ENABLED_CONTROLLERS
 	CLIENT_ONLY_CONTROLLERS = { INPUT = true, INTERFACE = true } :: { [string]: boolean },
 	SERVER_ONLY_CONTROLLERS = {} :: { [string]: boolean },
+
+	PLAYER_MODULE_NAME = "PlayerModule",
+	INPUT_LEGACY_WAIT_SECONDS = 5,
+	INPUT_MODERN_WAIT_SECONDS = 3,
 }

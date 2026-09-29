@@ -64,6 +64,7 @@ export type BackboneConfig = {
 	},
 
 	ANIMATION: {
+		DEFAULT_VARIANT_KEY: string,
 		MAX_CONCURRENT_MARKER_FETCHES: number,
 		MARKER_FETCH_RETRIES: number,
 		MARKER_FETCH_BACKOFF_SECONDS: number,
@@ -142,10 +143,11 @@ export type BackboneConfigInput = {
 	}?,
 
 	ANIMATION: {
+		DEFAULT_VARIANT_KEY: string?,
 		MAX_CONCURRENT_MARKER_FETCHES: number?,
 		MARKER_FETCH_RETRIES: number?,
 		MARKER_FETCH_BACKOFF_SECONDS: number?,
-	},
+	}?,
 
 	CHARACTER: {
 		CLIENT_CHARACTER_MODEL_TIMEOUT: number?,
@@ -459,15 +461,16 @@ export type AnimationDefinition = {
 	FadeTime: number?,
 	Weight: number?,
 	Speed: number?,
+	Tags: { string }?,
 	Looped: boolean?,
 	Priority: Enum.AnimationPriority?,
 }
 
-export type AnimationFamilyTable = { [string]: string }
+export type AnimationVariantTable = { [string]: string }
 
 export type AnimatorConfig = {
 	Animations: { [string]: AnimationDefinition },
-	Families: { [string]: AnimationFamilyTable }?,
+	Variants: { [string]: AnimationVariantTable }?,
 }
 
 export type AnimationPlayOverrides = {
@@ -482,6 +485,7 @@ export type AnimationInternalEntry = {
 	Id: number,
 	Definition: AnimationDefinition,
 	Guid: string,
+	Tags: { [string]: boolean },
 	Track: AnimationTrack,
 	MarkersLoaded: boolean,
 	MarkerJanitor: Janitor.Janitor,
@@ -498,13 +502,14 @@ export type MarkerReachedPayload = {
 
 export type AnimationController = {
 	Objects: { [string]: AnimatorClass },
-	DefaultVariantKey: string,
-	AnimationMarkerReached: Signal.Signal<MarkerReachedPayload>,
+	AnimationMarkerReached: Signal.Signal<AnimatorClass, MarkerReachedPayload>,
 
 	new: (groupId: string, animator: Animator?) -> AnimatorClass,
 	Get: (self: AnimationController, groupId: string, animator: Animator?) -> AnimatorClass,
 	Destroy: (self: AnimationController, groupId: string) -> (),
 }
+
+export type PlayInOrderPredicate = (self: AnimatorClass, entry: AnimationInternalEntry) -> boolean
 
 export type AnimatorClass = {
 	GroupId: string,
@@ -513,36 +518,60 @@ export type AnimatorClass = {
 	Played: Signal.Signal<AnimationInternalEntry>,
 	Entries: { [string]: AnimationInternalEntry },
 	Adhoc: { [number]: AnimationInternalEntry },
-	Families: { [string]: AnimationFamilyTable },
-	ActiveVariant: { [string]: string },
+	TagIndex: { [string]: { [string]: AnimationInternalEntry } },
+	Variants: { [string]: AnimationVariantTable },
+	ActiveVariant: string,
+
 	_sequenceToken: number,
 
 	SetAnimator: (self: AnimatorClass, animator: Animator) -> (),
 	IsRegistered: (self: AnimatorClass) -> boolean,
 	LoadFromConfig: (self: AnimatorClass, config: AnimatorConfig) -> Promise.TypedPromise<()>,
 	LoadAnimation: (self: AnimatorClass, name: string, definition: AnimationDefinition) -> AnimationInternalEntry?,
+
 	GetRegistered: (self: AnimatorClass, name: string) -> AnimationInternalEntry?,
 	GetLoadedNames: (self: AnimatorClass) -> { string },
+
 	GetMarkerReachedSignal: (self: AnimatorClass, name: string, marker: string) -> RBXScriptSignal?,
 	GetTimePosition: (self: AnimatorClass, name: string) -> number?,
 	SetTimePosition: (self: AnimatorClass, name: string, position: number) -> (),
 	SeekToProgress: (self: AnimatorClass, name: string, alpha: number) -> (),
 	GetProgress: (self: AnimatorClass, name: string) -> number?,
 	BindToProgress: (self: AnimatorClass, name: string, alpha: number, callback: () -> ()) -> (() -> ())?,
-	SetFamilyVariant: (self: AnimatorClass, familyName: string, variantKey: string) -> (),
-	GetFamilyVariant: (self: AnimatorClass, familyName: string) -> string?,
+
+	PlayInOrder: (
+		self: AnimatorClass,
+		names: { string },
+		overrides: AnimationPlayOverrides?,
+		predicate: PlayInOrderPredicate?
+	) -> Promise.TypedPromise<()>,
+
 	Play: (self: AnimatorClass, name: string, overrides: AnimationPlayOverrides?) -> AnimationTrack?,
-	PlayFamily: (self: AnimatorClass, familyName: string, overrides: AnimationPlayOverrides?) -> AnimationTrack?,
 	PlayById: (self: AnimatorClass, id: number, overrides: AnimationPlayOverrides?) -> AnimationTrack?,
 	IsPlaying: (self: AnimatorClass, name: string) -> boolean,
 	IsAdhocPlaying: (self: AnimatorClass, id: number) -> boolean,
 	Stop: (self: AnimatorClass, name: string, fadeTime: number?) -> AnimationTrack?,
-	StopFamily: (self: AnimatorClass, familyName: string, fadeTime: number?) -> AnimationTrack?,
-	StopAll: (self: AnimatorClass, fadeTime: number?) -> (),
+	StopAll: (self: AnimatorClass, fadeTime: number?, exceptTag: string?) -> (),
+
+	SetVariant: (self: AnimatorClass, variantKey: string) -> (),
+	GetVariant: (self: AnimatorClass) -> string,
+	StopVariant: (self: AnimatorClass, variantKey: string, fadeTime: number?) -> (),
+	ResolveEntry: (self: AnimatorClass, name: string) -> AnimationInternalEntry?,
+
+	HasTag: (self: AnimatorClass, name: string, tag: string) -> boolean,
+	AddTag: (self: AnimatorClass, name: string, tag: string) -> (),
+	RemoveTag: (self: AnimatorClass, name: string, tag: string) -> (),
+	StopAllWithTag: (self: AnimatorClass, tag: string, fadeTime: number?, except: { string }?) -> (),
+	StopTags: (self: AnimatorClass, tags: { string }, fadeTime: number?, except: { string }?) -> (),
+	IsTagPlaying: (self: AnimatorClass, tag: string) -> boolean,
+	GetNamesWithTag: (self: AnimatorClass, tag: string) -> { string },
+
 	Reset: (self: AnimatorClass) -> (),
 	Reload: (self: AnimatorClass, config: AnimatorConfig) -> Promise.TypedPromise<()>,
 	Destroy: (self: AnimatorClass) -> (),
 
+	_indexTag: (self: AnimatorClass, entry: AnimationInternalEntry, tag: string) -> (),
+	_unindexTag: (self: AnimatorClass, entry: AnimationInternalEntry, tag: string) -> (),
 	_loadMarkersAsync: (self: AnimatorClass, entry: AnimationInternalEntry) -> (),
 	_assertRegistered: (self: AnimatorClass) -> boolean,
 }
@@ -553,6 +582,8 @@ export type InputBinding = {
 	Keycode: Enum.KeyCode?,
 	UserInputType: Enum.UserInputType?,
 }
+
+export type InputSystem = "Legacy" | "Modern" | "None"
 
 export type ActionConfig = {
 	Name: string,
@@ -586,6 +617,8 @@ export type HoldConfig = {
 	Name: string,
 }
 
+export type MoveProvider = () -> Vector2
+
 export type ActionState = "Began" | "Ended"
 
 export type BoundCallback = {
@@ -615,7 +648,8 @@ export type InputController = {
 	_bindingIndex: {
 		[Enum.KeyCode | Enum.UserInputType]: { string },
 	},
-	_controls: any,
+	_moveProvider: MoveProvider?,
+	_inputSystem: InputSystem,
 
 	BindAction: (
 		self: InputController,
@@ -649,6 +683,7 @@ export type InputController = {
 	_resolveDevice: (self: InputController) -> InputDevice,
 	_readSource: (self: InputController, source: AxisSource, runtime: AxisRuntime) -> Vector2,
 	_readThumbstick: (self: InputController, thumbstick: Enum.KeyCode) -> Vector2,
+	_getMoveVector: (self: InputController) -> Vector2,
 	_readTouchpad: (self: InputController) -> Vector2,
 }
 
