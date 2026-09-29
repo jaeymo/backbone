@@ -12,9 +12,17 @@
             }
         },
 
+        "StarterPlayer": {
+            "$className": "StarterPlayer",
+
+            "StarterPlayerScripts": {
+                "$path": "testing/client"
+            }
+        },
+
         "ServerScriptService": {
             "testing": {
-                "$path": "testing"
+                "$path": "testing/server"
             }
         }
     }
