@@ -16,9 +16,8 @@ local ValidateDisabledController = require(util.ValidateDisabledController)
 
 local AnimationController = {
 	Objects = {} :: { [string]: AnimatorClass },
-	DefaultVariantKey = "Default",
-	AnimationMarkerReached = Signal.new() :: Signal.Signal<Types.MarkerReachedPayload>,
-}
+	AnimationMarkerReached = Signal.new() :: Signal.Signal<Types.AnimatorClass, Types.MarkerReachedPayload>,
+} :: AnimationController
 
 --[=[
 	@class AnimatorClass 
@@ -79,12 +78,17 @@ local function fetchKeyframeMarkers(id: number): { Instance }?
 			return KeyframeSequenceProvider:GetKeyframeSequenceAsync(`rbxassetid://{id}`)
 		end)
 
-		if ok then
+		if ok and result and #(result :: KeyframeSequence):GetKeyframes() > 0 then
 			sequence = result :: KeyframeSequence
 			break
 		end
 
-		lastError = tostring(result)
+		if ok then
+			lastError = "empty AnimationClip (known caching quirk), retrying"
+		else
+			lastError = tostring(result)
+		end
+
 		if attempt < retries then
 			task.wait(backoff * attempt)
 		end
@@ -101,6 +105,7 @@ local function fetchKeyframeMarkers(id: number): { Instance }?
 	recurseMarkers(sequence, markers)
 	return markers
 end
+
 --[=[
 	@priv
 ]=]
@@ -114,8 +119,6 @@ type AnimationController = Types.AnimationController
 
 type AnimationDefinition = Types.AnimationDefinition
 
-type FamilyTable = Types.AnimationFamilyTable
-
 type AnimatorConfig = Types.AnimatorConfig
 
 type PlayOverrides = Types.AnimationPlayOverrides
@@ -124,18 +127,22 @@ type InternalEntry = Types.AnimationInternalEntry
 
 type MarkerReachedPayload = Types.MarkerReachedPayload
 
-type PlayInOrderPredicate = (self: AnimatorClass, entry: InternalEntry) -> boolean
+type PlayInOrderPredicate = Types.PlayInOrderPredicate
 
 function AnimatorClass.new(groupId: string, animator: Animator?): AnimatorClass
+	local config = Config.get()
+
 	return setmetatable({
 		Animator = animator,
 		GroupId = groupId,
 		Janitor = Janitor.new(),
 		Played = Signal.new(),
+		ActiveVariant = config.ANIMATION.DEFAULT_VARIANT_KEY,
+		TagIndex = {},
+		Variants = {},
 		Entries = {},
 		Adhoc = {},
-		Families = {},
-		ActiveVariant = {},
+		VariantChanged = Signal.new(),
 		_sequenceToken = 0,
 	}, AnimatorClass) :: AnimatorClass
 end
@@ -160,7 +167,7 @@ function AnimatorClass.LoadFromConfig(self: AnimatorClass, config: AnimatorConfi
 			return
 		end
 
-		-- Hard cast here because we called :_assertRegistered()
+		-- Cast here because we called :_assertRegistered()
 		if not (self.Animator :: Animator):IsDescendantOf(workspace) then
 			reject(`[{script.Name}] Animator must be a descendant of workspace`)
 			return
@@ -170,17 +177,29 @@ function AnimatorClass.LoadFromConfig(self: AnimatorClass, config: AnimatorConfi
 			self:LoadAnimation(name, definition)
 		end
 
-		if config.Families then
-			for familyName, familyTable in config.Families do
-				if not familyTable[AnimationController.DefaultVariantKey] then
-					warn(
-						`[{script.Name}] Family "{familyName}" on "{self.GroupId}" has no "{AnimationController.DefaultVariantKey}" variant.`
-					)
+		if config.Variants then
+			for variantKey, variantTable in config.Variants do
+				local target = self.Variants[variantKey]
+				if not target then
+					target = {}
+					self.Variants[variantKey] = target
 				end
 
-				self.Families[familyName] = familyTable
-				if not self.ActiveVariant[familyName] then
-					self.ActiveVariant[familyName] = AnimationController.DefaultVariantKey
+				for logicalName, animationName in variantTable do
+					if not self.Entries[animationName] then
+						warn(
+							`[{script.Name}] Variant "{variantKey}" maps "{logicalName}" to unloaded animation "{animationName}" on "{self.GroupId}"`
+						)
+					end
+
+					local previous = target[logicalName]
+					if previous and previous ~= animationName then
+						warn(
+							`[{script.Name}] Variant "{variantKey}" remapped "{logicalName}" from "{previous}" to "{animationName}" on "{self.GroupId}"`
+						)
+					end
+
+					target[logicalName] = animationName
 				end
 			end
 		end
@@ -221,6 +240,7 @@ function AnimatorClass.LoadAnimation(self: AnimatorClass, name: string, definiti
 	if definition.Looped ~= nil then
 		track.Looped = definition.Looped :: boolean
 	end
+
 	if definition.Priority then
 		track.Priority = definition.Priority :: Enum.AnimationPriority
 	end
@@ -232,8 +252,15 @@ function AnimatorClass.LoadAnimation(self: AnimatorClass, name: string, definiti
 		Track = track,
 		Guid = HttpService:GenerateGUID(false),
 		MarkersLoaded = false,
+		Tags = {},
 		MarkerJanitor = Janitor.new(),
 	}
+
+	if definition.Tags then
+		for _, tag in definition.Tags do
+			self:_indexTag(entry, tag)
+		end
+	end
 
 	self.Entries[name] = entry
 
@@ -257,64 +284,8 @@ function AnimatorClass.GetLoadedNames(self: AnimatorClass): { string }
 	return names
 end
 
-function AnimatorClass.PlayInOrder(
-	self: AnimatorClass,
-	names: { string },
-	overrides: PlayOverrides?,
-	predicate: PlayInOrderPredicate?
-): Promise.TypedPromise<()>
-	local cancelled = false
-
-	self._sequenceToken = (self._sequenceToken or 0) + 1
-
-	local token = self._sequenceToken
-
-	return Promise.new(function(resolve, reject, onCancel)
-		onCancel(function()
-			cancelled = true
-		end)
-
-		task.spawn(function()
-			for _, name in names do
-				if cancelled or token ~= self._sequenceToken then
-					resolve()
-					return
-				end
-
-				local track = self:Play(name, overrides)
-				local entry = self:GetRegistered(name)
-
-				if not track or not entry then
-					continue
-				end
-
-				if track.Looped then
-					warn(`[{script.Name}] Cannot call ":PlayInOrder()" with track "{name}" because it is looped`)
-					continue
-				end
-
-				if predicate then
-					while
-						not cancelled
-						and token == self._sequenceToken
-						and not (predicate :: PlayInOrderPredicate)(self, entry) -- What is wrong with the typechecking here..?
-					do
-						task.wait()
-					end
-				else
-					track.Ended:Wait()
-				end
-			end
-
-			if not cancelled and token == self._sequenceToken then
-				resolve()
-			end
-		end)
-	end)
-end
-
 function AnimatorClass.GetMarkerReachedSignal(self: AnimatorClass, name: string, marker: string): RBXScriptSignal?
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	if not entry then
 		warn(`[{script.Name}] No loaded animation named "{name}" on "{self.GroupId}"`)
 		return nil
@@ -323,51 +294,41 @@ function AnimatorClass.GetMarkerReachedSignal(self: AnimatorClass, name: string,
 	return entry.Track:GetMarkerReachedSignal(marker)
 end
 
-function AnimatorClass.SetFamilyVariant(self: AnimatorClass, familyName: string, variantKey: string)
-	if not self.Families[familyName] then
-		warn(`[{script.Name}] No family named "{familyName}" on "{self.GroupId}"`)
-		return
-	end
-
-	self.ActiveVariant[familyName] = variantKey
-end
-
-function AnimatorClass.GetFamilyVariant(self: AnimatorClass, familyName: string): string?
-	return self.ActiveVariant[familyName]
-end
-
 function AnimatorClass.GetTimePosition(self: AnimatorClass, name: string): number?
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	return entry and entry.Track.TimePosition
 end
 
 function AnimatorClass.SetTimePosition(self: AnimatorClass, name: string, position: number)
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	if not entry then
 		warn(`[{script.Name}] No loaded animation named "{name}" on "{self.GroupId}"`)
 		return
 	end
+
 	entry.Track.TimePosition = position
 end
 
 function AnimatorClass.SeekToProgress(self: AnimatorClass, name: string, alpha: number)
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	if not entry then
 		return
 	end
+
 	entry.Track.TimePosition = math.clamp(alpha, 0, 1) * entry.Track.Length
 end
 
 function AnimatorClass.GetProgress(self: AnimatorClass, name: string): number?
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	if not entry or entry.Track.Length <= 0 then
 		return nil
 	end
+
 	return entry.Track.TimePosition / entry.Track.Length
 end
 
 function AnimatorClass.BindToProgress(self: AnimatorClass, name: string, alpha: number, callback: () -> ()): (() -> ())?
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	if not entry then
 		warn(`[{script.Name}] No loaded animation named "{name}" on "{self.GroupId}"`)
 		return nil
@@ -403,12 +364,72 @@ function AnimatorClass.BindToProgress(self: AnimatorClass, name: string, alpha: 
 	end
 end
 
+function AnimatorClass.PlayInOrder(
+	self: AnimatorClass,
+	names: { string },
+	overrides: PlayOverrides?,
+	predicate: PlayInOrderPredicate?
+): Promise.TypedPromise<()>
+	local cancelled = false
+
+	self._sequenceToken = (self._sequenceToken or 0) + 1
+
+	local token = self._sequenceToken
+
+	return Promise.new(function(resolve, reject, onCancel)
+		onCancel(function()
+			cancelled = true
+		end)
+
+		task.spawn(function()
+			for index, name in names do
+				if cancelled or token ~= self._sequenceToken then
+					resolve()
+					return
+				end
+
+				local track = self:Play(name, overrides)
+				local entry = self:ResolveEntry(name)
+
+				if not track or not entry then
+					continue
+				end
+
+				if track.Looped then
+					if index < #names then
+						warn(
+							`[{script.Name}] Cannot call ":PlayInOrder()" with track "{name}" because it is looped and not the last step`
+						)
+					end
+					continue
+				end
+
+				if predicate then
+					while
+						not cancelled
+						and token == self._sequenceToken
+						and not (predicate :: PlayInOrderPredicate)(self, entry) -- What is wrong with the typechecking here..?
+					do
+						task.wait()
+					end
+				else
+					track.Ended:Wait()
+				end
+			end
+
+			if not cancelled and token == self._sequenceToken then
+				resolve()
+			end
+		end)
+	end)
+end
+
 function AnimatorClass.Play(self: AnimatorClass, name: string, overrides: PlayOverrides?): AnimationTrack?
 	if not self:_assertRegistered() then
 		return nil
 	end
 
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	if not entry then
 		warn(`[{script.Name}] No loaded animation named "{name}" on "{self.GroupId}"`)
 		return nil
@@ -426,26 +447,6 @@ function AnimatorClass.Play(self: AnimatorClass, name: string, overrides: PlayOv
 	entry.Track:Play(fadeTime, weight, speed)
 
 	return entry.Track
-end
-
-function AnimatorClass.PlayFamily(self: AnimatorClass, familyName: string, overrides: PlayOverrides?): AnimationTrack?
-	local family = self.Families[familyName]
-	if not family then
-		warn(`[{script.Name}] No family named "{familyName}" on "{self.GroupId}"`)
-		return nil
-	end
-
-	local variantKey = self.ActiveVariant[familyName] or AnimationController.DefaultVariantKey
-	local animationName = family[variantKey] or family[AnimationController.DefaultVariantKey]
-
-	if not animationName then
-		warn(
-			`[{script.Name}] Family "{familyName}" has no variant "{variantKey}" and no "{AnimationController.DefaultVariantKey}" fallback on "{self.GroupId}"`
-		)
-		return nil
-	end
-
-	return self:Play(animationName, overrides)
 end
 
 function AnimatorClass.PlayById(self: AnimatorClass, id: number, overrides: PlayOverrides?): AnimationTrack?
@@ -479,6 +480,7 @@ function AnimatorClass.PlayById(self: AnimatorClass, id: number, overrides: Play
 			Definition = { Id = id },
 			Track = track,
 			Guid = HttpService:GenerateGUID(false),
+			Tags = {},
 			MarkersLoaded = false,
 			MarkerJanitor = Janitor.new(),
 		} :: InternalEntry
@@ -502,7 +504,7 @@ function AnimatorClass.PlayById(self: AnimatorClass, id: number, overrides: Play
 end
 
 function AnimatorClass.IsPlaying(self: AnimatorClass, name: string): boolean
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	return entry ~= nil and entry.Track.IsPlaying
 end
 
@@ -512,7 +514,7 @@ function AnimatorClass.IsAdhocPlaying(self: AnimatorClass, id: number): boolean
 end
 
 function AnimatorClass.Stop(self: AnimatorClass, name: string, fadeTime: number?): AnimationTrack?
-	local entry = self:GetRegistered(name)
+	local entry = self:ResolveEntry(name)
 	if not entry then
 		warn(`[{script.Name}] No loaded animation named "{name}" on "{self.GroupId}"`)
 		return nil
@@ -522,29 +524,122 @@ function AnimatorClass.Stop(self: AnimatorClass, name: string, fadeTime: number?
 	return entry.Track
 end
 
-function AnimatorClass.StopFamily(self: AnimatorClass, familyName: string, fadeTime: number?): AnimationTrack?
-	local family = self.Families[familyName]
-	if not family then
-		return nil
-	end
-
-	local variantKey = self.ActiveVariant[familyName] or AnimationController.DefaultVariantKey
-	local animationName = family[variantKey] or family[AnimationController.DefaultVariantKey]
-	if not animationName then
-		return nil
-	end
-
-	return self:Stop(animationName, fadeTime)
-end
-
-function AnimatorClass.StopAll(self: AnimatorClass, fadeTime: number?)
+function AnimatorClass.StopAll(self: AnimatorClass, fadeTime: number?, exceptTag: string?)
 	for _, entry in self.Entries do
+		if exceptTag and entry.Tags[exceptTag] then
+			continue
+		end
 		entry.Track:Stop(fadeTime)
 	end
 
 	for _, entry in self.Adhoc do
 		entry.Track:Stop(fadeTime)
 	end
+end
+
+function AnimatorClass.SetVariant(self: AnimatorClass, variantKey: string)
+	local config = Config.get()
+
+	if variantKey ~= config.ANIMATION.DEFAULT_VARIANT_KEY and not self.Variants[variantKey] then
+		warn(`[{script.Name}] No variant named "{variantKey}" on "{self.GroupId}"`)
+		return
+	end
+
+	self.ActiveVariant = variantKey
+end
+
+function AnimatorClass.GetVariant(self: AnimatorClass): string
+	return self.ActiveVariant
+end
+
+function AnimatorClass.StopVariant(self: AnimatorClass, variantKey: string, fadeTime: number?)
+	local variant = self.Variants[variantKey]
+	if not variant then
+		return
+	end
+
+	for _, animationName in variant do
+		local entry = self.Entries[animationName]
+		if entry then
+			entry.Track:Stop(fadeTime)
+		end
+	end
+end
+
+function AnimatorClass.ResolveEntry(self: AnimatorClass, name: string): InternalEntry?
+	local config = Config.get()
+
+	local active = self.Variants[self.ActiveVariant]
+	local default = self.Variants[config.ANIMATION.DEFAULT_VARIANT_KEY]
+
+	local resolved = (active and active[name]) or (default and default[name]) or name
+	return self.Entries[resolved]
+end
+
+function AnimatorClass.HasTag(self: AnimatorClass, name: string, tag: string): boolean
+	local entry = self:GetRegistered(name)
+	return entry ~= nil and entry.Tags[tag] == true
+end
+
+function AnimatorClass.AddTag(self: AnimatorClass, name: string, tag: string)
+	local entry = self:GetRegistered(name)
+	if entry then
+		self:_indexTag(entry, tag)
+	end
+end
+
+function AnimatorClass.RemoveTag(self: AnimatorClass, name: string, tag: string)
+	local entry = self:GetRegistered(name)
+	if entry then
+		self:_unindexTag(entry, tag)
+	end
+end
+
+function AnimatorClass.StopAllWithTag(self: AnimatorClass, tag: string, fadeTime: number?, except: { string }?)
+	local bucket = self.TagIndex[tag]
+	if not bucket then
+		return
+	end
+
+	for name, entry in bucket do
+		if except and table.find(except, name) then
+			continue
+		end
+
+		entry.Track:Stop(fadeTime)
+	end
+end
+
+function AnimatorClass.StopTags(self: AnimatorClass, tags: { string }, fadeTime: number?, except: { string }?)
+	for _, tag in tags do
+		self:StopAllWithTag(tag, fadeTime, except)
+	end
+end
+
+function AnimatorClass.IsTagPlaying(self: AnimatorClass, tag: string): boolean
+	local bucket = self.TagIndex[tag]
+	if not bucket then
+		return false
+	end
+
+	for _, entry in bucket do
+		if entry.Track.IsPlaying then
+			return true
+		end
+	end
+
+	return false
+end
+
+function AnimatorClass.GetNamesWithTag(self: AnimatorClass, tag: string): { string }
+	local names = {}
+	local bucket = self.TagIndex[tag]
+	if bucket then
+		for name in bucket do
+			table.insert(names, name)
+		end
+	end
+	return names
 end
 
 function AnimatorClass.Reset(self: AnimatorClass)
@@ -565,10 +660,13 @@ function AnimatorClass.Reset(self: AnimatorClass)
 		cleanEntry(entry)
 	end
 
+	self.TagIndex = {}
 	self.Entries = {}
 	self.Adhoc = {}
-	self.Families = {}
-	self.ActiveVariant = {}
+	self.Variants = {}
+
+	local config = Config.get()
+	self.ActiveVariant = config.ANIMATION.DEFAULT_VARIANT_KEY
 end
 
 function AnimatorClass.Reload(self: AnimatorClass, config: AnimatorConfig): Promise.TypedPromise<()>
@@ -607,19 +705,52 @@ function AnimatorClass._loadMarkersAsync(self: AnimatorClass, entry: InternalEnt
 					return
 				end
 
-				AnimationController.AnimationMarkerReached:Fire({
-					MarkerName = marker.Name,
-					GroupId = self.GroupId,
-					AnimationName = entry.Name,
-					Animator = self.Animator,
-					Track = entry.Track,
-					Parameters = { ... },
-				} :: MarkerReachedPayload)
+				AnimationController.AnimationMarkerReached:Fire(
+					self,
+					{
+						MarkerName = marker.Name,
+						GroupId = self.GroupId,
+						AnimationName = entry.Name,
+						Animator = self.Animator,
+						Track = entry.Track,
+						Parameters = { ... },
+					} :: MarkerReachedPayload
+				)
 			end))
 		end
 
 		entry.MarkersLoaded = true
 	end)
+end
+
+--[=[
+    @priv
+]=]
+function AnimatorClass._indexTag(self: AnimatorClass, entry: InternalEntry, tag: string)
+	local bucket = self.TagIndex[tag]
+	if not bucket then
+		bucket = {}
+		self.TagIndex[tag] = bucket
+	end
+
+	bucket[entry.Name] = entry
+	entry.Tags[tag] = true
+end
+
+--[=[
+    @priv
+]=]
+function AnimatorClass._unindexTag(self: AnimatorClass, entry: InternalEntry, tag: string)
+	local bucket = self.TagIndex[tag]
+	if bucket then
+		bucket[entry.Name] = nil
+
+		if next(bucket) == nil then
+			self.TagIndex[tag] = nil
+		end
+	end
+
+	entry.Tags[tag] = nil
 end
 
 --[=[
