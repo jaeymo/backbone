@@ -1,11 +1,13 @@
 --!strict
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local StarterPlayer = game:GetService("StarterPlayer")
 local UserInputService = game:GetService("UserInputService")
 
 local root = script.Parent.Parent
 local packages = root.Parent
 local util = root.Util
+
 local localPlayer = Players.LocalPlayer
 
 local Config = require(root.Core.Config)
@@ -13,13 +15,25 @@ local Promise = require(packages.Promise)
 local Types = require(root.Types)
 local ValidateDisabledController = require(util.ValidateDisabledController)
 
+local CONSTANTS = require(root.Constants)
+
+local PLAYER_MODULE_NAME = CONSTANTS.PLAYER_MODULE_NAME
+local MODERN_WAIT_SECONDS = CONSTANTS.INPUT_MODERN_WAIT_SECONDS
+local LEGACY_WAIT_SECONDS = CONSTANTS.INPUT_LEGACY_WAIT_SECONDS
+
 local InputController = {
 	_actions = {} :: { [string]: ActionRuntime },
 	_axes = {} :: { [string]: AxisRuntime },
 	_blockCounts = {} :: { [string]: number },
 	_bindingIndex = {} :: { [Enum.KeyCode | Enum.UserInputType]: { string } },
+	_moveProvider = nil :: MoveProvider?,
+	_inputSystem = "None" :: InputSystem,
 	_controls = nil :: any,
 }
+
+export type InputSystem = Types.InputSystem
+
+export type MoveProvider = Types.MoveProvider
 
 export type HoldConfig = Types.HoldConfig
 
@@ -29,11 +43,6 @@ export type InputBinding = Types.InputBinding
 
 export type ActionConfig = Types.ActionConfig
 
---[=[
-	Movement (WASD/Thumbstick1) and camera/viewmodel sway (MouseDelta/Thumbstick2) 
-    are BOTH Axes, on purpose, so consumers read them through the exact same Vector2 
-    API regardless of device.
-]=]
 export type AxisSource = Types.AxisSource
 
 export type AxisConfig = Types.AxisConfig
@@ -51,6 +60,74 @@ export type AxisRuntime = Types.AxisRuntime
 export type InputController = Types.InputController
 
 --[=[
+	Legacy (pre-IAS): PlayerScripts.PlayerModule:GetControls():GetMoveVector()
+	returns a Vector3 where forward is -Z. Convert to Vector2 with forward = +Y.
+]=]
+local function buildLegacyMoveProvider(): MoveProvider?
+	local playerScripts = localPlayer:WaitForChild("PlayerScripts", LEGACY_WAIT_SECONDS)
+	local moduleScript = playerScripts and playerScripts:WaitForChild(PLAYER_MODULE_NAME, LEGACY_WAIT_SECONDS)
+	if not moduleScript or not moduleScript:IsA("ModuleScript") then
+		return nil
+	end
+
+	local ok, playerModule = pcall(function()
+		return (require :: any)(moduleScript)
+	end)
+	if not ok or type(playerModule) ~= "table" or type(playerModule.GetControls) ~= "function" then
+		return nil
+	end
+
+	local controls = (playerModule :: any):GetControls()
+	if not controls or type(controls.GetMoveVector) ~= "function" then
+		return nil
+	end
+
+	return function(): Vector2
+		local moveVector: Vector3 = (controls :: any):GetMoveVector()
+		return Vector2.new(moveVector.X, -moveVector.Z)
+	end
+end
+
+--[=[
+	Modern (IAS): StarterPlayer.PlayerModule.InputContexts.CharacterContext.MoveAction
+	We never require the PlayerModule here, since it exposes no public API.
+]=]
+local function buildModernMoveProvider(modernModule: Instance): MoveProvider
+	local function resolveMoveAction(): any?
+		local contexts = localPlayer:WaitForChild("InputContexts") or modernModule:WaitForChild("InputContexts")
+		local characterContext = contexts and contexts:WaitForChild("CharacterContext")
+		local moveAction = characterContext and characterContext:WaitForChild("MoveAction")
+
+		if moveAction and moveAction:IsA("InputAction") then
+			return moveAction
+		end
+
+		return nil
+	end
+
+	local cachedAction: any? = nil
+	local warned = false
+
+	return function(): Vector2
+		-- Re-resolve if never found, or if Server Authority swapped the instance out
+		if not cachedAction or not (cachedAction :: Instance).Parent then
+			cachedAction = resolveMoveAction()
+		end
+
+		if not cachedAction then
+			if not warned then
+				warned = true
+				warn(`[{script.Name}] MoveAction not found; touch/move axis will read zero`)
+			end
+			return Vector2.zero
+		end
+
+		local state = cachedAction:GetState()
+		return if typeof(state) == "Vector2" then state else Vector2.zero
+	end
+end
+
+--[=[
 	Called when Backbone awakens this module. Perform synchronous setup here.
 ]=]
 function InputController.OnAwake(self: InputController)
@@ -65,8 +142,7 @@ function InputController.OnAwake(self: InputController)
 	for name, cfg in INPUTS.Actions do
 		self:_registerAction(name, cfg)
 
-		-- The Hold target isn't in Config.Actions -- it relies on its
-		-- parent's binding
+		-- The Hold target isn't in Config.Actions
 		if cfg.Hold then
 			self:_registerAction(cfg.Hold.Name, {
 				Name = cfg.Hold.Name,
@@ -94,10 +170,44 @@ end
 ]=]
 function InputController.OnInit(self: InputController): Promise.TypedPromise<()>
 	return Promise.new(function(resolve)
-		-- Cast to any because we won't have types for the PlayerModule
-		local playerModule = (require :: any)(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
-		print(playerModule)
-		self._controls = playerModule:GetControls()
+		local provider: MoveProvider? = nil
+
+		-- Modern check first so we never stall legacy
+		local modernModule = StarterPlayer:FindFirstChild(PLAYER_MODULE_NAME)
+		if modernModule then
+			provider = buildModernMoveProvider(modernModule)
+			self._inputSystem = "Modern"
+		end
+
+		-- Legacy check
+		if not provider then
+			provider = buildLegacyMoveProvider()
+			if provider then
+				self._inputSystem = "Legacy"
+			end
+		end
+
+		-- Safety wait for the modern module
+		if not provider then
+			modernModule = StarterPlayer:WaitForChild(PLAYER_MODULE_NAME, MODERN_WAIT_SECONDS)
+			if modernModule then
+				provider = buildModernMoveProvider(modernModule)
+				self._inputSystem = "Modern"
+			end
+		end
+
+		if provider then
+			self._moveProvider = provider
+
+			if Config.get().LOGGING.INPUT then
+				print(`[{script.Name}] Using {self._inputSystem} player input system`)
+			end
+		else
+			self._inputSystem = "None"
+			warn(`[{script.Name}] PlayerModule could not be resolved in either location; Touchpad axis disabled`)
+		end
+
+		resolve()
 	end)
 end
 
@@ -152,7 +262,6 @@ end
 --[=[
 	Blocks an Action, or every Action in a Group, refcounted so overlapping
 	systems can block the same name without stepping on each other's Unblock.
-	Cancels any in-flight Hold thread for affected Actions.
 ]=]
 function InputController.Block(self: InputController, nameOrGroup: string)
 	self._blockCounts[nameOrGroup] = (self._blockCounts[nameOrGroup] or 0) + 1
@@ -257,8 +366,7 @@ end
 
 --[=[
 	@priv
-	Flattens every Action's ActiveBindings into a single physical-input ->
-	{actionNames} lookup.
+	Flattens every Action's ActiveBindings
 ]=]
 function InputController._rebuildBindingIndex(self: InputController)
 	table.clear(self._bindingIndex)
@@ -448,9 +556,7 @@ end
 
 --[=[
 	@priv
-	Axes read once per RenderStepped, sourced from whichever device the
-	player last touched (UserInputService:GetLastInputType), so a stray
-	thumbstick twitch doesn't stack with keyboard input.
+	Axes read once per RenderStepped
 ]=]
 function InputController._connectAxisUpdate(self: InputController)
 	RunService.RenderStepped:Connect(function()
@@ -539,11 +645,24 @@ end
 
 --[=[
     @priv
+	Unified move vector, forward = Y+
+]=]
+function InputController._getMoveVector(self: InputController): Vector2
+	local provider = self._moveProvider
+
+	if provider then
+		return provider()
+	else
+		return Vector2.zero
+	end
+end
+
+--[=[
+    @priv
 ]=]
 function InputController._readTouchpad(self: InputController): Vector2
 	local config = Config.get()
-	local moveVector = self._controls:GetMoveVector()
-	local value = Vector2.new(moveVector.X, -moveVector.Z)
+	local value = self:_getMoveVector()
 
 	return value.Magnitude > config.INPUT.THUMBSTICK_DEADZONE and value or Vector2.zero
 end
