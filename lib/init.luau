@@ -9,7 +9,7 @@ local Types = require(script.Types)
 local DEFAULTS = require(script.Defaults)
 
 local Backbone = {
-	Version = "0.1.1",
+	Version = "0.1.2",
 }
 
 export type Backbone = typeof(Backbone)
@@ -95,7 +95,7 @@ for _, v in script:GetDescendants() do
 	end
 end
 
-function Backbone.Server(self: Backbone): Types.ServerRuntime
+function Backbone.Server(self: Backbone): ServerRuntime
 	if not IS_SERVER then
 		error(`[BACKBONE] Cannot call :Server() on the client!`)
 	end
@@ -103,7 +103,7 @@ function Backbone.Server(self: Backbone): Types.ServerRuntime
 	return require(script.Core.Process.ServerRuntime) :: any
 end
 
-function Backbone.Client(self: Backbone): Types.ClientRuntime
+function Backbone.Client(self: Backbone): ClientRuntime
 	if IS_SERVER then
 		error(`[BACKBONE] Cannot call :Client() on the server!`)
 	end
@@ -114,6 +114,10 @@ function Backbone.Client(self: Backbone): Types.ClientRuntime
 	end
 
 	return require(script.Core.Process.ClientRuntime) :: any
+end
+
+function Backbone.Shared(self: Backbone): SharedRuntime<SharedControllers>
+	return require(script.Core.Process.SharedRuntime)
 end
 
 return Backbone

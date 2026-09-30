@@ -86,6 +86,7 @@ export type BackboneConfig = {
 	},
 }
 
+-- How do I write a type function to make the BackboneConfig table have ALL optionals?
 export type BackboneConfigInput = {
 	INIT_METHOD: string?,
 	AWAKE_METHOD: string?,
@@ -184,6 +185,7 @@ export type SharedRuntime<T> = {
 	GetPromise: (self: SharedRuntime<T>) -> typeof(Promise),
 	GetImportLayer: (self: SharedRuntime<T>) -> ImportLayer,
 	GetControllers: (self: SharedRuntime<T>) -> T,
+	OnPhase: (self: SharedRuntime<T>, phase: LifecyclePhaseName, callback: () -> ()) -> Signal.Connection?,
 }
 
 export type ImportLayer = {

@@ -2,11 +2,14 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local root = script.Parent.Parent.Parent
+local packages = root.Parent
 
 local Config = require(root.Core.Config)
+local Enums = require(root.Enums)
 local ImportLayer = require(root.Core.ImportLayer)
 local NetworkLayer = require(root.Core.NetworkLayer)
 local Promise = require(ReplicatedStorage.Packages.Promise)
+local Signal = require(packages.Signal)
 local Types = require(root.Types)
 
 local SharedRuntime = {
@@ -58,6 +61,44 @@ end
 
 function SharedRuntime.GetNetworkLayer(self: SharedRuntime): Types.NetworkLayer
 	return NetworkLayer :: any
+end
+
+--[=[
+	Runs a callback when the runtime reaches the specified lifecycle phase.
+
+	If the runtime has already reached the phase, the callback is scheduled
+	immediately. The returned connection can be disconnected to cancel the callback.
+
+	@param phase The lifecycle phase to wait for.
+	@param callback The function to execute when the phase is reached.
+	@return A connection if the phase has not been reached yet, otherwise nil.
+]=]
+function SharedRuntime.OnPhase(
+	self: SharedRuntime,
+	phase: Types.LifecyclePhaseName,
+	callback: () -> ()
+): Signal.Connection?
+	local import = self:GetImportLayer()
+	local targetPhase = Enums.LifecyclePhase[phase]
+
+	if not targetPhase then
+		error(`Invalid lifecycle phase: {phase}`)
+	end
+
+	if import:GetPhase().Priority >= targetPhase.Priority then
+		task.spawn(callback)
+		return nil
+	end
+
+	local connection: Signal.Connection
+	connection = self.PhaseChanged:Connect(function(currentPhase)
+		if currentPhase.Priority >= targetPhase.Priority then
+			connection:Disconnect()
+			task.spawn(callback)
+		end
+	end)
+
+	return connection
 end
 
 return SharedRuntime
