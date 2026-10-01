@@ -9,7 +9,7 @@ local Types = require(script.Types)
 local DEFAULTS = require(script.Defaults)
 
 local Backbone = {
-	Version = "0.1.2",
+	Version = "0.1.3",
 }
 
 export type Backbone = typeof(Backbone)
@@ -117,7 +117,7 @@ function Backbone.Client(self: Backbone): ClientRuntime
 end
 
 function Backbone.Shared(self: Backbone): SharedRuntime<SharedControllers>
-	return require(script.Core.Process.SharedRuntime)
+	return require(script.Core.Process.SharedRuntime) :: any
 end
 
 return Backbone
