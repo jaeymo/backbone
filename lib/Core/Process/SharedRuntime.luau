@@ -18,8 +18,8 @@ local SharedRuntime = {
 }
 
 type OnPhaseOverloads =
-	((self: SharedRuntime, phase: "Init", callback: (any) -> Promise.TypedPromise<()>) -> Signal.Connection?)
-	& ((self: SharedRuntime, phase: "Awake" | "Start", callback: (any) -> ()) -> Signal.Connection?)
+	((self: SharedRuntime, phase: "Init", callback: () -> Promise.TypedPromise<()>) -> Signal.Connection?)
+	& ((self: SharedRuntime, phase: "Awake" | "Start", callback: () -> ()) -> Signal.Connection?)
 
 --[=[
 	@priv

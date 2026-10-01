@@ -189,11 +189,11 @@ export type SharedRuntime<T> = {
 	OnPhase: ((
 		self: SharedRuntime<T>,
 		phase: "Init",
-		callback: (any) -> Promise.TypedPromise<()>
+		callback: () -> Promise.TypedPromise<()>
 	) -> Signal.Connection?) & ((
 		self: SharedRuntime<T>,
 		phase: "Awake" | "Start",
-		callback: (any) -> ()
+		callback: () -> ()
 	) -> Signal.Connection?),
 }
 
