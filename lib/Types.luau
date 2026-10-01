@@ -185,6 +185,7 @@ export type SharedRuntime<T> = {
 	GetPromise: (self: SharedRuntime<T>) -> typeof(Promise),
 	GetImportLayer: (self: SharedRuntime<T>) -> ImportLayer,
 	GetControllers: (self: SharedRuntime<T>) -> T,
+	GetDefaults: (self: SharedRuntime<T>) -> BackboneConfig,
 
 	OnPhase: ((
 		self: SharedRuntime<T>,

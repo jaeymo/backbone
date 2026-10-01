@@ -5,6 +5,7 @@ local root = script.Parent.Parent.Parent
 local packages = root.Parent
 
 local Config = require(root.Core.Config)
+local Defaults = require(root.Defaults)
 local Enums = require(root.Enums)
 local ImportLayer = require(root.Core.ImportLayer)
 local NetworkLayer = require(root.Core.NetworkLayer)
@@ -13,6 +14,7 @@ local Signal = require(packages.Signal)
 local Types = require(root.Types)
 
 local SharedRuntime = {
+	Defaults = Defaults,
 	PhaseChanged = ImportLayer.PhaseChanged,
 	Controllers = {} :: any,
 }
@@ -72,6 +74,10 @@ end
 
 function SharedRuntime.GetNetworkLayer(self: SharedRuntime): Types.NetworkLayer
 	return NetworkLayer :: any
+end
+
+function SharedRuntime.GetDefaults(self: SharedRuntime): typeof(Defaults)
+	return self.Defaults
 end
 
 --[=[
