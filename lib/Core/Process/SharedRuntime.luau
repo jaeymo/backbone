@@ -17,13 +17,24 @@ local SharedRuntime = {
 	Controllers = {} :: any,
 }
 
+type OnPhaseOverloads =
+	((self: SharedRuntime, phase: "Init", callback: (any) -> Promise.TypedPromise<()>) -> Signal.Connection?)
+	& ((self: SharedRuntime, phase: "Awake" | "Start", callback: (any) -> ()) -> Signal.Connection?)
+
+--[=[
+	@priv
+]=]
 local function keyFor(name: string): string
 	return (string.gsub(name, "Controller$", "")):upper() -- "InputController" -> "INPUT"
 end
 
-local loaded = {} :: { [string]: any }
-for _, v in root.Controllers:GetChildren() do
-	loaded[v.Name] = (require :: any)(v)
+local loaded: { [string]: any }
+
+do
+	loaded = {}
+	for _, v in root.Controllers:GetChildren() do
+		loaded[v.Name] = (require :: any)(v)
+	end
 end
 
 SharedRuntime.Controllers = setmetatable({}, {
@@ -64,20 +75,9 @@ function SharedRuntime.GetNetworkLayer(self: SharedRuntime): Types.NetworkLayer
 end
 
 --[=[
-	Runs a callback when the runtime reaches the specified lifecycle phase.
-
-	If the runtime has already reached the phase, the callback is scheduled
-	immediately. The returned connection can be disconnected to cancel the callback.
-
-	@param phase The lifecycle phase to wait for.
-	@param callback The function to execute when the phase is reached.
-	@return A connection if the phase has not been reached yet, otherwise nil.
+	@priv
 ]=]
-function SharedRuntime.OnPhase(
-	self: SharedRuntime,
-	phase: Types.LifecyclePhaseName,
-	callback: () -> Promise.TypedPromise<()>? | any?
-): Signal.Connection?
+local function onPhase(self: SharedRuntime, phase: Types.LifecyclePhaseName, callback: () -> ...any): Signal.Connection?
 	local import = self:GetImportLayer()
 	local targetPhase = Enums.LifecyclePhase[phase]
 
@@ -100,5 +100,7 @@ function SharedRuntime.OnPhase(
 
 	return connection
 end
+
+SharedRuntime.OnPhase = onPhase :: OnPhaseOverloads
 
 return SharedRuntime

@@ -9,7 +9,7 @@ local Types = require(script.Types)
 local DEFAULTS = require(script.Defaults)
 
 local Backbone = {
-	Version = "0.1.4",
+	Version = "0.1.5",
 }
 
 export type Backbone = typeof(Backbone)

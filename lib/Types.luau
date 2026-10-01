@@ -185,15 +185,20 @@ export type SharedRuntime<T> = {
 	GetPromise: (self: SharedRuntime<T>) -> typeof(Promise),
 	GetImportLayer: (self: SharedRuntime<T>) -> ImportLayer,
 	GetControllers: (self: SharedRuntime<T>) -> T,
-	OnPhase: (
+
+	OnPhase: ((
 		self: SharedRuntime<T>,
-		phase: LifecyclePhaseName,
-		callback: (any) -> Promise.TypedPromise<()>? | any?
-	) -> Signal.Connection?,
+		phase: "Init",
+		callback: (any) -> Promise.TypedPromise<()>
+	) -> Signal.Connection?) & ((
+		self: SharedRuntime<T>,
+		phase: "Awake" | "Start",
+		callback: (any) -> ()
+	) -> Signal.Connection?),
 }
 
 export type ImportLayer = {
-	Start: (self: ImportLayer, directories: Instance | { Instance }) -> Promise.TypedPromise<>,
+	Start: (self: ImportLayer, directories: Instance | { Instance }) -> Promise.TypedPromise<()>,
 	Bootstrap: (self: ImportLayer, directories: Instance | { Instance }) -> (),
 	GetPhase: (self: ImportLayer) -> LifecyclePhaseEnum,
 	SetPhase: (self: ImportLayer, phase: LifecyclePhaseEnum) -> (),
