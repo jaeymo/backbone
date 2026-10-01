@@ -76,7 +76,7 @@ end
 function SharedRuntime.OnPhase(
 	self: SharedRuntime,
 	phase: Types.LifecyclePhaseName,
-	callback: () -> Promise.TypedPromise<()>?
+	callback: () -> Promise.TypedPromise<()>? | any?
 ): Signal.Connection?
 	local import = self:GetImportLayer()
 	local targetPhase = Enums.LifecyclePhase[phase]
