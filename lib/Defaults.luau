@@ -87,6 +87,10 @@ local BACKBONE_DEFAULTS: Types.BackboneConfig = {
 			Axes = {},
 		},
 	},
+
+	PHYSICS = {
+		COLLISION_MATRIX = {},
+	},
 }
 
 return BACKBONE_DEFAULTS

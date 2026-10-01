@@ -5,6 +5,7 @@ local RunService = game:GetService("RunService")
 
 local root = script.Parent.Parent
 
+local DeferToPhase = require(root.Util.DeferToPhase)
 local Packet = require(ReplicatedStorage.Packages.Packet)
 local Types = require(root.Types)
 
@@ -160,6 +161,30 @@ function NetworkLayer.OnClient(self: NetworkLayer, packetName: string, Callback:
 	assert(not IS_SERVER, `[{script.Name}] OnClient called on server!`)
 
 	return self:GetPacket(packetName).OnClientEvent:Connect(Callback) :: Connection
+end
+
+function NetworkLayer.OnServerDeferred(
+	self: NetworkLayer,
+	packetName: string,
+	phase: Types.LifecyclePhaseName,
+	callback: (Player, ...any) -> (),
+	options: Types.DeferOptions?
+): Connection
+	assert(IS_SERVER, `[{script.Name}] OnServerDeferred called on client!`)
+
+	return DeferToPhase.Connect(self:GetPacket(packetName).OnServerEvent, phase, callback, options)
+end
+
+function NetworkLayer.OnClientDeferred(
+	self: NetworkLayer,
+	packetName: string,
+	phase: Types.LifecyclePhaseName,
+	callback: (...any) -> (),
+	options: Types.DeferOptions?
+): Connection
+	assert(not IS_SERVER, `[{script.Name}] OnClientDeferred called on server!`)
+
+	return DeferToPhase.Connect(self:GetPacket(packetName).OnClientEvent, phase, callback, options)
 end
 
 function NetworkLayer.BuildPacketsFromConfig(

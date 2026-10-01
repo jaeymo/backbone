@@ -6,6 +6,7 @@ local packages = root.Parent
 
 local Config = require(root.Core.Config)
 local Defaults = require(root.Defaults)
+local DeferToPhase = require(root.Util.DeferToPhase)
 local Enums = require(root.Enums)
 local ImportLayer = require(root.Core.ImportLayer)
 local NetworkLayer = require(root.Core.NetworkLayer)
@@ -78,6 +79,16 @@ end
 
 function SharedRuntime.GetDefaults(self: SharedRuntime): typeof(Defaults)
 	return self.Defaults
+end
+
+function SharedRuntime.DeferConnect(
+	self: SharedRuntime,
+	signal: any,
+	phase: Types.LifecyclePhaseName,
+	callback: (...any) -> (),
+	options: Types.DeferOptions?
+): Types.Connection
+	return DeferToPhase.Connect(signal, phase, callback, options)
 end
 
 --[=[

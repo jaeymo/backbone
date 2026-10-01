@@ -1,11 +1,15 @@
 --!strict
 local root = script.Parent
 local packages = root.Parent
+local util = root.Util
 
+local DeepPartial = require(util.DeepPartial)
 local Janitor = require(packages.Janitor)
 local Packet = require(packages.Packet)
 local Promise = require(packages.Promise)
 local Signal = require(packages.Signal)
+
+type DeepPartial<T> = DeepPartial.DeepPartial<T>
 
 export type BackboneConfig = {
 	INIT_METHOD: string,
@@ -84,87 +88,13 @@ export type BackboneConfig = {
 		CONFIG: InputConfig,
 		THUMBSTICK_DEADZONE: number,
 	},
+
+	PHYSICS: {
+		COLLISION_MATRIX: CollisionMatrix,
+	},
 }
 
--- How do I write a type function to make the BackboneConfig table have ALL optionals?
-export type BackboneConfigInput = {
-	INIT_METHOD: string?,
-	AWAKE_METHOD: string?,
-	START_METHOD: string?,
-
-	MODULE_ATTRIBUTE_GUID_NAME: string?,
-	IGNORE_MODULE_LOAD_TAG_NAME: string?,
-	INTERNAL_CONTROLLER_TAG: string?,
-
-	PACKETS: { [string]: NetworkPacketConfig }?,
-
-	TAGS: {
-		ACTOR: string?,
-		ENTITY: string?,
-		CHARACTER: string?,
-	}?,
-
-	ATTRIBUTES: {
-		ENTITY_ID: string?,
-		ENTITY_GUID: string?,
-		ENTITY_TYPE: string?,
-		ENTITY_SPAWN_TIME: string?,
-		ENTITY_DEFINITION: string?,
-	}?,
-
-	AUDIO: {
-		SOURCES: { Instance }?,
-		RESOLVERS: AudioResolvers?,
-	}?,
-
-	COLLISION_GROUPS: {
-		CHARACTER: string?,
-		CHARACTER_ROOT: string?,
-	}?,
-
-	ENABLED_CONTROLLERS: {
-		ANIMATION: boolean?,
-		INTERFACE: boolean?,
-		CHARACTER: boolean?,
-		PHYSICS: boolean?,
-		ENTITY: boolean?,
-		AUDIO: boolean?,
-		INPUT: boolean?,
-	}?,
-
-	LOGGING: {
-		MODULE_NAME_ON_REQUIRE: boolean?,
-		BACKBONE_AWOKEN: boolean?,
-		PHASE_CHANGED: boolean?,
-
-		CHARACTER: boolean?,
-		ENTITY: boolean?,
-		AUDIO: boolean?,
-		INPUT: boolean?,
-	}?,
-
-	ANIMATION: {
-		DEFAULT_VARIANT_KEY: string?,
-		MAX_CONCURRENT_MARKER_FETCHES: number?,
-		MARKER_FETCH_RETRIES: number?,
-		MARKER_FETCH_BACKOFF_SECONDS: number?,
-	}?,
-
-	CHARACTER: {
-		CLIENT_CHARACTER_MODEL_TIMEOUT: number?,
-		BIND_TO_COLLISION_GROUP: boolean?,
-	}?,
-
-	ENTITY: {
-		CLIENT_ENTITY_GUID_TIMEOUT: number?,
-		PROXY_FOLDER_NAME: string?,
-	}?,
-
-	INPUT: {
-		THUMBSTICK_DEADZONE: number?,
-		CONFIG: InputConfig?,
-	}?,
-}
+export type BackboneConfigInput = DeepPartial<BackboneConfig>
 
 export type ClientRuntime = {
 	_initialized: boolean,
@@ -186,6 +116,14 @@ export type SharedRuntime<T> = {
 	GetImportLayer: (self: SharedRuntime<T>) -> ImportLayer,
 	GetControllers: (self: SharedRuntime<T>) -> T,
 	GetDefaults: (self: SharedRuntime<T>) -> BackboneConfig,
+
+	DeferConnect: (
+		self: SharedRuntime<T>,
+		signal: any,
+		phase: LifecyclePhaseName,
+		callback: (...any) -> (),
+		options: DeferOptions?
+	) -> Connection,
 
 	OnPhase: ((
 		self: SharedRuntime<T>,
@@ -220,6 +158,10 @@ export type NetworkPacketConfig = {
 	UNRELIABLE: boolean?,
 }
 
+export type DeferOptions = {
+	Drop: boolean?, -- discard events that arrive before the phase instead of queueing them
+}
+
 export type NetworkLayer = {
 	Packets: { [string]: Packet }?,
 
@@ -243,6 +185,22 @@ export type NetworkLayer = {
 	OnInvoke: (self: NetworkLayer, packetName: string, callback: (...any) -> ...any?) -> (),
 	OnServer: (self: NetworkLayer, packetName: string, callback: (Player, ...any) -> ()) -> Connection,
 	OnClient: (self: NetworkLayer, packetName: string, callback: (...any) -> ()) -> Connection,
+
+	OnServerDeferred: (
+		self: NetworkLayer,
+		packetName: string,
+		phase: LifecyclePhaseName,
+		callback: (Player, ...any) -> (),
+		options: DeferOptions?
+	) -> Connection,
+
+	OnClientDeferred: (
+		self: NetworkLayer,
+		packetName: string,
+		phase: LifecyclePhaseName,
+		callback: (...any) -> (),
+		options: DeferOptions?
+	) -> Connection,
 
 	BuildPacketsFromConfig: (
 		self: NetworkLayer,
@@ -730,7 +688,13 @@ export type PhysicsController = {
 		callback: (object: PhysicsObject) -> (),
 		async: boolean?
 	) -> (),
+
+	SetGroupsCollidable: (self: PhysicsController, a: string, b: string, collidable: boolean) -> (),
+	ApplyCollisionMatrix: (self: PhysicsController, matrix: CollisionMatrix) -> (),
 }
+
+--- matrix [A][B] = true/false, each pair only has to be declared once
+export type CollisionMatrix = { [string]: { [string]: boolean } }
 
 export type InterfaceLayer = "HUD" | "Menu" | "Overlay" | "Popup"
 
