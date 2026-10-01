@@ -131,7 +131,7 @@ export type SharedRuntime<T> = {
 		callback: () -> Promise.TypedPromise<()>
 	) -> Signal.Connection?) & ((
 		self: SharedRuntime<T>,
-		phase: "Awake" | "Start",
+		phase: "Awake" | "Start" | "Done",
 		callback: () -> ()
 	) -> Signal.Connection?),
 }
