@@ -29,6 +29,9 @@ local InputController = {
 	_moveProvider = nil :: MoveProvider?,
 	_inputSystem = "None" :: InputSystem,
 	_controls = nil :: any,
+	_context = "" :: string,
+	_releaseOnSwitch = true :: boolean,
+	_knownContexts = {} :: { [string]: boolean },
 }
 
 export type InputSystem = Types.InputSystem
