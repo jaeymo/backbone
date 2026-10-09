@@ -1,7 +1,7 @@
 [package]
 name = "jaeymo/backbone"
 description = "A medium-weight game framework, the backbone of your project!"
-version = "0.1.13"
+version = "0.1.14"
 exclude = ["**"]
 include = ["lib", "lib/**", "wally.toml", "wally.lock", "default.project.json", "LICENSE", "README.md"]
 license = "MIT"

@@ -709,7 +709,7 @@ export type PhysicsController = {
 --- matrix [A][B] = true/false, each pair only has to be declared once
 export type CollisionMatrix = { [string]: { [string]: boolean } }
 
-export type InterfaceLayer = "HUD" | "Menu" | "Overlay" | "Popup"
+export type InterfaceLayer = "Effects" | "HUD" | "Menu" | "PopUp" | "Toast" | "Tooltip" | "Mask" | "Overlay"
 
 export type InterfaceRegistration = {
 	Instance: GuiObject,
@@ -734,6 +734,9 @@ export type InterfaceController = {
 	InterfaceOpened: Signal.Signal<string>,
 	InterfaceClosed: Signal.Signal<string>,
 
+	_guiLayers: { [ScreenGui]: InterfaceLayer },
+	_layerCounts: { [string]: number },
+
 	Registry: { [string]: InterfaceEntry },
 	GroupState: { [string]: string? }, -- Group -> currently-open interface name
 
@@ -745,6 +748,12 @@ export type InterfaceController = {
 	IsOpen: (self: InterfaceController, name: string) -> boolean,
 	GetOpenInGroup: (self: InterfaceController, group: string) -> string?,
 
+	_configureGui: (
+		self: InterfaceController,
+		name: string,
+		instance: GuiObject,
+		layer: InterfaceLayer
+	) -> (),
 	_setVisible: (self: InterfaceController, entry: InterfaceEntry, visible: boolean, ...any) -> (),
 }
 

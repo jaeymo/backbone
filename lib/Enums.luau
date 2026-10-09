@@ -5,19 +5,15 @@ local Types = require(root.Types)
 
 return {
 	InterfaceLayerOrder = {
-		Hud = {
-			Order = 100,
-		},
-		Menu = {
-			Order = 200,
-		},
-		Overlay = {
-			Order = 300,
-		},
-		Popup = {
-			Order = 400,
-		},
-	},
+		Effects = { Order = 50 },
+		HUD = { Order = 100 },
+		Menu = { Order = 200 },
+		PopUp = { Order = 300 },
+		Toast = { Order = 350 },
+		Tooltip = { Order = 400 },
+		Mask = { Order = 500 },
+		Overlay = { Order = 600 },
+	} :: { [Types.InterfaceLayer]: { Order: number } },
 
 	LifecyclePhase = {
 		Dead = {
