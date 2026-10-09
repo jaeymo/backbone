@@ -9,6 +9,16 @@ local Packet = require(packages.Packet)
 local Promise = require(packages.Promise)
 local Signal = require(packages.Signal)
 
+export type Signal<T...> = Signal.Signal<T...>
+
+export type SignalConnection = Signal.Connection
+
+export type Janitor = Janitor.Janitor
+
+export type Promise<T...> = Promise.TypedPromise<T...>
+
+export type Packet<A..., B...> = Packet.Packet<A..., B...>
+
 type DeepPartial<T> = DeepPartial.DeepPartial<T>
 
 export type BackboneConfig = {
@@ -145,8 +155,6 @@ export type ImportLayer = {
 	ToNextPhase: (self: ImportLayer) -> (),
 }
 
-export type Packet = Packet.Packet<...any, ...any>
-
 export type Connection = {
 	Disconnect: (self: Connection) -> (),
 }
@@ -163,10 +171,10 @@ export type DeferOptions = {
 }
 
 export type NetworkLayer = {
-	Packets: { [string]: Packet }?,
+	Packets: { [string]: Packet<...any> }?,
 
-	CreatePacket: (self: NetworkLayer, ...any) -> Packet,
-	GetPacket: (self: NetworkLayer, packetName: string) -> Packet,
+	CreatePacket: (self: NetworkLayer, ...any) -> Packet<...any>,
+	GetPacket: (self: NetworkLayer, packetName: string) -> Packet<...any>,
 	Inject: (self: NetworkLayer, packets: { [string]: any }) -> (),
 	SendClient: (self: NetworkLayer, packetName: string, client: Player, ...any) -> ...any,
 	SendServer: (self: NetworkLayer, packetName: string, ...any) -> ...any,
@@ -205,7 +213,7 @@ export type NetworkLayer = {
 	BuildPacketsFromConfig: (
 		self: NetworkLayer,
 		packets: { [string]: NetworkPacketConfig }
-	) -> { [string]: Packet },
+	) -> { [string]: Packet<...any> },
 }
 
 export type RequireAttemptResult = {

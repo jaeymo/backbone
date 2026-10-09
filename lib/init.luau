@@ -4,13 +4,21 @@ local RunService = game:GetService("RunService")
 local IS_SERVER = RunService:IsServer()
 local IS_RUNNING = RunService:IsRunning()
 
+local packages = script.Parent
+
+local Packet = require(packages.Packet)
 local Types = require(script.Types)
 
 local DEFAULTS = require(script.Defaults)
 
 local Backbone = {
-	Version = "0.1.14",
+	Version = "0.1.15",
 }
+
+export type Janitor = Types.Janitor
+export type Promise<T...> = Types.Promise<T...>
+export type Signal<T...> = Types.Signal<T...>
+export type SignalConnection = Types.SignalConnection
 
 export type Backbone = typeof(Backbone)
 export type BackboneConfig = Types.BackboneConfig
@@ -28,7 +36,7 @@ export type RequireAttemptResult = Types.RequireAttemptResult
 export type NetworkLayer = Types.NetworkLayer
 export type NetworkPacketConfig = Types.NetworkPacketConfig
 export type Connection = Types.Connection
-export type Packet = Types.Packet
+export type Packet<A..., B...> = Packet.Packet<A..., B...>
 
 export type EntityController = Types.EntityController
 export type Entity = Types.Entity
