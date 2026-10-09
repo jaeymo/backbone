@@ -562,6 +562,7 @@ export type ActionConfig = {
 	Hold: HoldConfig?,
 	Rebindable: boolean?,
 	Blockable: boolean?,
+	Contexts: { string }?,
 	CreateTouchButton: boolean?,
 	TouchButtonImage: string?,
 }
@@ -571,6 +572,7 @@ export type AxisSource = "WASD" | "MouseDelta" | "Thumbstick1" | "Thumbstick2" |
 export type AxisConfig = {
 	Name: string,
 	Group: string?,
+	Contexts: { string }?,
 	Sources: { [InputDevice]: AxisSource },
 	Sensitivity: number?, -- post-read multiplier (mainly for MouseDelta)
 	Invert: { X: boolean?, Y: boolean? }?,
@@ -578,6 +580,8 @@ export type AxisConfig = {
 }
 
 export type InputConfig = {
+	ReleaseOnSwitch: boolean?,
+	DefaultContext: string?,
 	Actions: { [string]: ActionConfig },
 	Axes: { [string]: AxisConfig },
 }
@@ -603,6 +607,7 @@ export type ActionRuntime = {
 	IsDown: boolean,
 	HoldThread: thread?,
 	SuppressEnded: boolean?,
+	LastInput: InputObject?,
 }
 
 export type AxisRuntime = {
@@ -620,6 +625,9 @@ export type InputController = {
 	},
 	_moveProvider: MoveProvider?,
 	_inputSystem: InputSystem,
+	_context: string,
+	_releaseOnSwitch: boolean,
+	_knownContexts: { [string]: boolean },
 
 	BindAction: (
 		self: InputController,
@@ -641,6 +649,11 @@ export type InputController = {
 	IsActionDown: (self: InputController, name: string) -> boolean,
 	GetAxis: (self: InputController, name: string) -> Vector2,
 
+	SwitchContext: (self: InputController, context: string, releaseActive: boolean?) -> (),
+	GetContext: (self: InputController) -> string,
+
+	_isInContext: (self: InputController, name: string) -> boolean,
+	_release: (self: InputController, name: string, runtime: ActionRuntime) -> (),
 	_registerAction: (self: InputController, name: string, config: ActionConfig) -> (),
 	_rebuildBindingIndex: (self: InputController) -> (),
 	_isBlocked: (self: InputController, name: string) -> boolean,

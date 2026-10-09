@@ -89,29 +89,39 @@ local function buildLegacyMoveProvider(): MoveProvider?
 end
 
 --[=[
+	@priv
+]=]
+local function resolveMoveAction(modernModule: Instance, yield: boolean): any?
+	local function child(parent: Instance?, name: string): Instance?
+		if not parent then
+			return nil
+		end
+
+		return if yield then parent:WaitForChild(name, MODERN_WAIT_SECONDS) else parent:FindFirstChild(name)
+	end
+
+	local inputContexts = child(localPlayer, "InputContexts") or child(modernModule, "InputContexts")
+	local characterContext = child(inputContexts, "CharacterContext")
+	local moveAction = child(characterContext, "MoveAction")
+
+	if moveAction and moveAction:IsA("InputAction") then
+		return moveAction
+	end
+
+	return nil
+end
+
+--[=[
 	Modern (IAS): StarterPlayer.PlayerModule.InputContexts.CharacterContext.MoveAction
 	We never require the PlayerModule here, since it exposes no public API.
 ]=]
 local function buildModernMoveProvider(modernModule: Instance): MoveProvider
-	local function resolveMoveAction(): any?
-		local contexts = localPlayer:WaitForChild("InputContexts") or modernModule:WaitForChild("InputContexts")
-		local characterContext = contexts and contexts:WaitForChild("CharacterContext")
-		local moveAction = characterContext and characterContext:WaitForChild("MoveAction")
-
-		if moveAction and moveAction:IsA("InputAction") then
-			return moveAction
-		end
-
-		return nil
-	end
-
-	local cachedAction: any? = nil
+	local cachedAction: any? = resolveMoveAction(modernModule, true)
 	local warned = false
 
 	return function(): Vector2
-		-- Re-resolve if never found, or if Server Authority swapped the instance out
 		if not cachedAction or not (cachedAction :: Instance).Parent then
-			cachedAction = resolveMoveAction()
+			cachedAction = resolveMoveAction(modernModule, false)
 		end
 
 		if not cachedAction then
@@ -119,11 +129,23 @@ local function buildModernMoveProvider(modernModule: Instance): MoveProvider
 				warned = true
 				warn(`[{script.Name}] MoveAction not found; touch/move axis will read zero`)
 			end
+
 			return Vector2.zero
 		end
 
 		local state = cachedAction:GetState()
 		return if typeof(state) == "Vector2" then state else Vector2.zero
+	end
+end
+
+--[=[
+	@priv
+]=]
+local function collectContexts(into: { [string]: boolean }, contexts: { string }?)
+	if contexts then
+		for _, context in contexts do
+			into[context] = true
+		end
 	end
 end
 
@@ -139,14 +161,19 @@ function InputController.OnAwake(self: InputController)
 
 	local INPUTS = config.INPUT.CONFIG
 
+	self._context = INPUTS.DefaultContext or ""
+	self._releaseOnSwitch = INPUTS.ReleaseOnSwitch ~= false
+
 	for name, cfg in INPUTS.Actions do
 		self:_registerAction(name, cfg)
+		collectContexts(self._knownContexts, cfg.Contexts)
 
-		-- The Hold target isn't in Config.Actions
+		-- the Hold target isn't in Config.Actions
 		if cfg.Hold then
 			self:_registerAction(cfg.Hold.Name, {
 				Name = cfg.Hold.Name,
 				Group = cfg.Group,
+				Contexts = cfg.Contexts,
 				Defaults = {},
 				Blockable = cfg.Blockable,
 				Rebindable = false,
@@ -160,6 +187,13 @@ function InputController.OnAwake(self: InputController)
 			Value = Vector2.zero,
 			_mouseDeltaBuffer = Vector2.zero,
 		}
+		collectContexts(self._knownContexts, cfg.Contexts)
+	end
+
+	if next(self._knownContexts) and not INPUTS.DefaultContext then
+		warn(
+			`[{script.Name}] Inputs use Contexts but no DefaultContext is set; only global inputs are active until SwitchContext is called`
+		)
 	end
 
 	self:_rebuildBindingIndex()
@@ -267,16 +301,8 @@ function InputController.Block(self: InputController, nameOrGroup: string)
 	self._blockCounts[nameOrGroup] = (self._blockCounts[nameOrGroup] or 0) + 1
 
 	for name, runtime in self._actions do
-		if name == nameOrGroup or runtime.Config.Group == nameOrGroup then
-			if runtime.IsDown then
-				runtime.IsDown = false
-				runtime.SuppressEnded = true
-			end
-
-			if runtime.HoldThread then
-				task.cancel(runtime.HoldThread)
-				runtime.HoldThread = nil
-			end
+		if (name == nameOrGroup or runtime.Config.Group == nameOrGroup) and runtime.Config.Blockable ~= false then
+			self:_release(name, runtime)
 		end
 	end
 end
@@ -332,11 +358,94 @@ function InputController.GetAxis(self: InputController, name: string): Vector2
 		return Vector2.zero
 	end
 
+	if not self:_isInContext(name) then
+		return Vector2.zero
+	end
+
 	if runtime.Config.Blockable ~= false and self:_isBlocked(name) then
 		return Vector2.zero
 	end
 
 	return runtime.Value
+end
+
+--[=[
+	Switches the active input context. Inputs with no Contexts are global and
+	always active. Actions that are down and inactive in the new context get a
+	synthetic Ended, unless releaseActive is false (defaults to
+	InputConfig.ReleaseOnSwitch). With false, Ended still arrives on the
+	physical release. A pending Hold is always cancelled.
+]=]
+function InputController.SwitchContext(self: InputController, context: string, releaseActive: boolean?)
+	if context == self._context then
+		return
+	end
+
+	if not self._knownContexts[context] then
+		warn(
+			`[{script.Name}] Context "{context}" isn't referenced by any Action or Axis; only global inputs will be active`
+		)
+	end
+
+	self._context = context
+
+	local release = if releaseActive ~= nil then releaseActive else self._releaseOnSwitch
+
+	for name, runtime in self._actions do
+		if runtime.IsDown and not self:_isInContext(name) then
+			if release or runtime.HoldThread then
+				self:_release(name, runtime)
+			end
+		end
+	end
+end
+
+function InputController.GetContext(self: InputController): string
+	return self._context
+end
+
+--[=[
+	@priv
+	Force-ends a held Action. 
+	
+	Dispatches a synthetic Ended only for what a consumer has already seen Began for, 
+	then swallows the physical release. The InputObject passed is the one from Began, 
+	so don't rely on its UserInputState.
+]=]
+function InputController._release(self: InputController, name: string, runtime: ActionRuntime)
+	if not runtime.IsDown then
+		return
+	end
+
+	runtime.IsDown = false
+	runtime.SuppressEnded = true
+
+	if runtime.HoldThread then
+		-- threshold not reached, so nothing was dispatched and there's nothing to end
+		task.cancel(runtime.HoldThread)
+		runtime.HoldThread = nil
+		return
+	end
+
+	local input = runtime.LastInput
+	if input then
+		local hold = runtime.Config.Hold
+		self:_dispatch(if hold then hold.Name else name, "Ended", input)
+	end
+end
+
+--[=[
+	@priv
+]=]
+function InputController._isInContext(self: InputController, name: string): boolean
+	local runtime = self._actions[name] or self._axes[name]
+	local contexts = runtime and runtime.Config.Contexts
+
+	if not contexts then
+		return true
+	end
+
+	return table.find(contexts, self._context) ~= nil
 end
 
 --[=[
@@ -478,9 +587,12 @@ end
 ]=]
 function InputController._fireBegan(self: InputController, name: string, input: InputObject)
 	local runtime = self._actions[name]
-	if not runtime or runtime.IsDown or self:_isBlocked(name) then
+	if not runtime or runtime.IsDown or self:_isBlocked(name) or not self:_isInContext(name) then
 		return
 	end
+
+	runtime.IsDown = true
+	runtime.LastInput = input
 
 	runtime.IsDown = true
 
@@ -523,13 +635,13 @@ function InputController._fireEnded(self: InputController, name: string, input: 
 	end
 
 	if runtime.HoldThread then
-		-- Released before the threshold: this was a tap, not a hold.
+		-- released before the threshold: this was a tap, not a hold.
 		task.cancel(runtime.HoldThread)
 		runtime.HoldThread = nil
 		self:_dispatch(name, "Began", input)
 		self:_dispatch(name, "Ended", input)
 	else
-		-- Threshold already won; the hold target is live
+		-- threshold already won; the hold target is live
 		self:_dispatch(hold.Name, "Ended", input)
 	end
 end
@@ -645,7 +757,7 @@ end
 
 --[=[
     @priv
-	Unified move vector, forward = Y+
+	forward = Y+
 ]=]
 function InputController._getMoveVector(self: InputController): Vector2
 	local provider = self._moveProvider
