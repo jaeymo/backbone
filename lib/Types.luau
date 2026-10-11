@@ -418,6 +418,8 @@ export type CharacterController = {
 
 	CharacterAdded: Signal.Signal<Character>,
 	CharacterRemoved: Signal.Signal<Character>,
+	LocalCharacterAdded: Signal.Signal<Character>,
+	LocalCharacterRemoved: Signal.Signal<Character>,
 
 	GetCharacterForPlayer: (self: CharacterController, player: Player) -> Character?,
 

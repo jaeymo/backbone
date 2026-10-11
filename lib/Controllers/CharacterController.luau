@@ -20,6 +20,8 @@ local IS_SERVER = RunService:IsServer()
 local CharacterController = {
 	CharacterAdded = Signal.new() :: Signal.Signal<Types.Character>,
 	CharacterRemoved = Signal.new() :: Signal.Signal<Types.Character>,
+	LocalCharacterAdded = Signal.new() :: Signal.Signal<Types.Character>,
+	LocalCharacterRemoved = Signal.new() :: Signal.Signal<Types.Character>,
 
 	LocalCharacter = (nil :: any) :: Character?,
 	_playerToCharacter = {} :: { [Player]: Character },
@@ -249,6 +251,10 @@ function CharacterController._bindCharacterEventsToEntity(self: CharacterControl
 		end
 
 		self.CharacterAdded:Fire(character)
+
+		if character.IsLocal then
+			self.LocalCharacterAdded:Fire(character)
+		end
 	end)
 
 	EntityController.EntityDestroyed:Connect(function(entity: EntityController.Entity, character: Character)
@@ -259,6 +265,10 @@ function CharacterController._bindCharacterEventsToEntity(self: CharacterControl
 			end
 
 			self.CharacterRemoved:Fire(character)
+
+			if character.IsLocal then
+				self.LocalCharacterRemoved:Fire(character)
+			end
 		end
 	end)
 end

@@ -12,7 +12,7 @@ local Types = require(script.Types)
 local DEFAULTS = require(script.Defaults)
 
 local Backbone = {
-	Version = "0.1.15",
+	Version = "0.1.16",
 }
 
 export type Janitor = Types.Janitor
