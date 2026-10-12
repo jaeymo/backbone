@@ -160,6 +160,39 @@ function CharacterController.BindRemovingToPlayer(
 end
 
 --[=[
+	Returns the movement direction relative to the character's facing.
+	`previous` adds hysteresis on diagonals so animations don't flicker, and is
+	returned as-is when the character isn't moving.
+]=]
+function CharacterController.GetMoveDirection(
+	self: CharacterController,
+	character: Character,
+	previous: Types.Direction
+): Types.Direction
+	local last: Types.Direction = previous or "Forward"
+
+	local agent = character.Agent
+	local humanoid = agent:GetHumanoid()
+
+	if humanoid.MoveDirection.Magnitude == 0 then
+		return last
+	end
+
+	local localMove = agent:GetRoot().CFrame:VectorToObjectSpace(humanoid.MoveDirection)
+	local x, z = localMove.X, localMove.Z
+
+	local bias = 0.1
+	local zWeight = math.abs(z) + if last == "Forward" or last == "Backward" then bias else 0
+	local xWeight = math.abs(x) + if last == "Left" or last == "Right" then bias else 0
+
+	if zWeight >= xWeight then
+		return if z < 0 then "Forward" else "Backward"
+	end
+
+	return if x > 0 then "Right" else "Left"
+end
+
+--[=[
     @priv  
 ]=]
 function CharacterController._onCharacterAdded(self: CharacterController, character: Model, isLocal: boolean?)

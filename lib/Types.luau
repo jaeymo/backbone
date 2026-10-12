@@ -416,6 +416,8 @@ export type CharacterRuntimeBuildDefinition = {
 	Animator: Animator,
 }
 
+export type Direction = "Left" | "Right" | "Forward" | "Backward"
+
 export type CharacterController = {
 	LocalCharacter: Character?,
 	CharacterContainer: Folder?,
@@ -438,6 +440,8 @@ export type CharacterController = {
 		player: Player,
 		callback: (character: Character) -> ()
 	) -> Signal.Connection,
+
+	GetMoveDirection: (self: CharacterController, character: Character, previous: Direction) -> Direction,
 }
 
 export type AnimationDefinition = {
