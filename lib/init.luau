@@ -12,7 +12,7 @@ local Types = require(script.Types)
 local DEFAULTS = require(script.Defaults)
 
 local Backbone = {
-	Version = "0.1.18",
+	Version = "0.1.19",
 }
 
 export type Janitor = Types.Janitor
@@ -60,6 +60,7 @@ export type SoundProperties = Types.SoundProperties
 export type AudioContext = Types.AudioContext
 export type SoundRequest = Types.SoundRequest
 
+export type Direction = Types.Direction
 export type CharacterController = Types.CharacterController
 export type CharacterRuntimeBuildDefinition = Types.CharacterRuntimeBuildDefinition
 export type Character = Types.Character
