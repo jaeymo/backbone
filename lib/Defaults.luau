@@ -38,7 +38,7 @@ local BACKBONE_DEFAULTS: Types.BackboneConfig = {
 	},
 
 	TAGS = {
-		ACTOR = "Actor",
+		AGENT = "Agent",
 		ENTITY = "Entity",
 		CHARACTER = "Character",
 	},
@@ -69,8 +69,10 @@ local BACKBONE_DEFAULTS: Types.BackboneConfig = {
 	},
 
 	CHARACTER = {
+		ANIMATION_GROUP_ID = "Character", -- The id passed to AnimationController.new()
 		CLIENT_CHARACTER_MODEL_TIMEOUT = 10,
 		BIND_TO_COLLISION_GROUP = true, -- Should the CharacterController update character collision groups based on the config?
+		DESTROY_ROOT_SOUNDS = true, -- Should the Character destroy it's root sounds?,
 	},
 
 	ENTITY = {

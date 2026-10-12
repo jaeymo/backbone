@@ -33,7 +33,7 @@ export type BackboneConfig = {
 	PACKETS: { [string]: NetworkPacketConfig },
 
 	TAGS: {
-		ACTOR: string,
+		AGENT: string,
 		ENTITY: string,
 		CHARACTER: string,
 	},
@@ -85,8 +85,10 @@ export type BackboneConfig = {
 	},
 
 	CHARACTER: {
+		ANIMATION_GROUP_ID: string,
 		CLIENT_CHARACTER_MODEL_TIMEOUT: number,
-		BIND_TO_COLLISION_GROUP: true,
+		DESTROY_ROOT_SOUNDS: boolean,
+		BIND_TO_COLLISION_GROUP: boolean,
 	},
 
 	ENTITY: {
@@ -398,11 +400,13 @@ export type Character = {
 	Agent: Agent,
 	IsLocal: boolean,
 	Player: Player,
+	Animation: AnimatorClass?,
 
 	Init: (self: Character, runtimeDefinition: CharacterRuntimeBuildDefinition) -> (),
 	Destroy: (self: Character) -> (),
 
 	_watchCollisionGroup: (self: Character) -> (),
+	_destroyRootSounds: (self: Character) -> (),
 }
 
 export type CharacterRuntimeBuildDefinition = {

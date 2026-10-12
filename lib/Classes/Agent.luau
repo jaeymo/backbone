@@ -17,7 +17,7 @@ function Agent.new(entity: Types.Entity, model: Model, root: BasePart, humanoid:
 	local subJanitor = Janitor.new()
 	entity.Janitor:Add(subJanitor, "Destroy")
 
-	model:AddTag(config.TAGS.ACTOR)
+	model:AddTag(config.TAGS.AGENT)
 
 	return setmetatable({
 		Entity = entity,
@@ -47,7 +47,7 @@ end
 
 function Agent.Destroy(self: Agent)
 	local config = Config.get()
-	self:GetModel():RemoveTag(config.TAGS.ACTOR)
+	self:GetModel():RemoveTag(config.TAGS.AGENT)
 	self.Janitor:Cleanup()
 end
 
