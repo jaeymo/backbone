@@ -2,6 +2,7 @@
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local root = script.Parent.Parent
 local util = root.Util
@@ -157,6 +158,10 @@ function CharacterController.BindRemovingToPlayer(
 			callback(character)
 		end
 	end)
+end
+
+function CharacterController.IsShiftLocked(self: CharacterController): boolean
+	return Players.LocalPlayer.DevEnableMouseLock and UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter
 end
 
 --[=[
