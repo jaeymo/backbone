@@ -395,6 +395,11 @@ export type SoundRequest = {
 	Visualize: boolean?,
 }
 
+export type DirectionalModes = {
+	ShiftLocked: boolean,
+	Default: boolean,
+}
+
 export type Character = {
 	Entity: Entity,
 	Agent: Agent,
@@ -441,7 +446,12 @@ export type CharacterController = {
 		callback: (character: Character) -> ()
 	) -> Signal.Connection,
 
-	GetMoveDirection: (self: CharacterController, character: Character, previous: Direction) -> Direction,
+	GetMoveDirection: (
+		self: CharacterController,
+		character: Character,
+		previous: Direction?,
+		directional: DirectionalModes?
+	) -> Direction,
 }
 
 export type AnimationDefinition = {

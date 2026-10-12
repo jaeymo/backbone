@@ -166,14 +166,25 @@ end
 
 --[=[
 	Returns the movement direction relative to the character's facing.
+	`directional` controls, per mode (shift-locked or default), whether 4D direction
+	is used. When it's off for the current mode, this always returns "Forward".
+	Omitting it enables 4D in both modes.
 	`previous` adds hysteresis on diagonals so animations don't flicker, and is
 	returned as-is when the character isn't moving.
 ]=]
 function CharacterController.GetMoveDirection(
 	self: CharacterController,
 	character: Character,
-	previous: Types.Direction
+	previous: Types.Direction?,
+	directional: Types.DirectionalModes?
 ): Types.Direction
+	if directional then
+		local enabled = if self:IsShiftLocked() then directional.ShiftLocked else directional.Default
+		if not enabled then
+			return "Forward"
+		end
+	end
+
 	local last: Types.Direction = previous or "Forward"
 
 	local agent = character.Agent
