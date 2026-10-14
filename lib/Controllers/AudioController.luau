@@ -7,10 +7,10 @@ local CooldownClass = require(util.CooldownClass)
 local Types = require(root.Types)
 local ValidateDisabledController = require(util.ValidateDisabledController)
 
--- Part to use when placing sounds in the world
+-- Part to use when placing audio in the world
 local CACHED_PART = (function()
 	local part = Instance.new("Part")
-	part.Name = "Sound"
+	part.Name = "Audio"
 	part.Transparency = 1
 	part.Material = Enum.Material.Plastic
 	part.CanCollide = false
@@ -28,6 +28,18 @@ local AudioController = {
 	Groups = {} :: { [string]: { Sound } },
 }
 
+export type AudioOptions = Types.AudioOptions
+
+export type AudioProperties = Types.AudioProperties
+
+export type AudioContext = Types.AudioContext
+
+export type AudioRequest = Types.AudioRequest
+
+export type AudioResolver = Types.AudioResolver
+
+export type AudioController = typeof(AudioController)
+
 --[=[
     Called when Backbone awakens this module. Perform synchronous setup here.
 ]=]
@@ -38,70 +50,23 @@ function AudioController.OnAwake(self: AudioController)
 		for _, object in source:GetDescendants() do
 			if object:IsA("Sound") then
 				if self.Registry[object.Name] then
-					warn(`[{script.Name}] Duplicate sound name "{object.Name}" in {object:GetFullName()}`)
+					warn(`[{script.Name}] Duplicate audio name "{object.Name}" in {object:GetFullName()}`)
 				end
-				self:RegisterSound(object.Name, object)
+				self:RegisterAudio(object.Name, object)
 			end
 		end
 	end
 end
 
-export type Options = {
-	Weld: BasePart?, -- attaches to an instance in the world
-	Visualize: boolean?, -- should we visualize the sound instance?
-	Context: AudioContext?, -- context passed to resolverss
-	Properties: SoundProperties?, -- sound properties
-}
-
-export type SoundProperties = Types.SoundProperties
-
-export type AudioContext = Types.AudioContext
-
-export type SoundRequest = Types.SoundRequest
-
-export type AudioController = typeof(AudioController)
-
-function AudioController.CreateRequest(self: AudioController, soundName: string, options: Options?): SoundRequest?
-	local config = Config.get()
-
-	local resolvers = config.AUDIO.RESOLVERS
-	local resolver = resolvers[soundName]
-
-	if resolver then
-		return resolver(options and options.Context)
-	end
-
-	local sound = self.Registry[soundName]
-
-	if not sound then
-		if config.LOGGING.AUDIO then
-			warn(`[{script.Name}] Unknown sound "{soundName}"`)
-		end
-
-		return nil
-	end
-
-	return {
-		Sound = sound,
-		Weld = options and options.Weld,
-		Properties = options and options.Properties,
-		Visualize = options and options.Visualize or false,
-	}
-end
-
-function AudioController.RegisterSound(self: AudioController, name: string, sound: Sound)
-	local config = Config.get()
-
+function AudioController.RegisterAudio(self: AudioController, name: string, sound: Sound)
 	self.Registry[name] = sound
 
-	if config.LOGGING.AUDIO then
-		print(`[{script.Name}] Registered sound "{name}"`)
+	if Config.get().LOGGING.AUDIO then
+		print(`[{script.Name}] Registered audio "{name}"`)
 	end
 end
 
 function AudioController.RegisterGroup(self: AudioController, name: string, folder: Instance)
-	local config = Config.get()
-
 	local sounds = {}
 
 	for _, object in folder:GetChildren() do
@@ -112,52 +77,102 @@ function AudioController.RegisterGroup(self: AudioController, name: string, fold
 
 	self.Groups[name] = sounds
 
-	if config.LOGGING.AUDIO then
+	if Config.get().LOGGING.AUDIO then
 		print(`[{script.Name}] Registered group "{name}" ({#sounds} sounds)`)
 	end
 end
 
-function AudioController.Play(self: AudioController, soundName: string, options: Options?): Sound?
-	local request = self:CreateRequest(soundName, options)
+function AudioController.CreateRequests(
+	self: AudioController,
+	audioName: string,
+	options: AudioOptions?
+): { AudioRequest }
+	local config = Config.get()
+	local resolved: AudioOptions = options or {}
+	local requests: { AudioRequest } = {}
 
-	if not request then
-		return nil
+	local resolver = config.AUDIO.RESOLVERS[audioName]
+
+	if resolver then
+		local result = resolver(resolved.Context or {}, resolved)
+
+		if result == nil then
+			return requests
+		end
+
+		if (result :: any).Audio ~= nil then
+			requests = { result :: AudioRequest }
+		else
+			requests = result :: { AudioRequest }
+		end
+	else
+		local sound = self.Registry[audioName]
+
+		if not sound then
+			if config.LOGGING.AUDIO then
+				warn(`[{script.Name}] Unknown audio "{audioName}"`)
+			end
+
+			return requests
+		end
+
+		requests = { { Audio = sound } }
 	end
 
-	return self:PlayRequest(request)
-end
+	local applied: { AudioRequest } = {}
 
-function AudioController.PlayAt(self: AudioController, soundName: string, position: Vector3, options: Options?): Sound?
-	local request = self:CreateRequest(soundName, options)
-
-	if not request then
-		return nil
+	for index, request in requests do
+		applied[index] = self:_applyOptions(request, resolved)
 	end
 
-	request.Position = position
-
-	return self:PlayRequest(request)
+	return applied
 end
 
-function AudioController.PlayOn(self: AudioController, soundName: string, parent: Instance, options: Options?): Sound?
-	local request = self:CreateRequest(soundName, options)
+function AudioController.Play(self: AudioController, audioName: string, options: AudioOptions?): { Sound }
+	local sounds: { Sound } = {}
 
-	if not request then
-		return nil
+	for _, request in self:CreateRequests(audioName, options) do
+		local sound = self:PlayRequest(request)
+
+		if sound then
+			table.insert(sounds, sound)
+		end
 	end
 
-	request.Parent = parent
-
-	return self:PlayRequest(request)
+	return sounds
 end
 
-function AudioController.PlayRequest(self: AudioController, request: SoundRequest): Sound?
+function AudioController.PlayAt(
+	self: AudioController,
+	audioName: string,
+	position: Vector3,
+	options: AudioOptions?
+): { Sound }
+	local merged: AudioOptions = table.clone(options or {}) :: AudioOptions
+	merged.Position = position
+
+	return self:Play(audioName, merged)
+end
+
+function AudioController.PlayOn(
+	self: AudioController,
+	audioName: string,
+	parent: Instance,
+	options: AudioOptions?
+): { Sound }
+	local merged: AudioOptions = table.clone(options or {}) :: AudioOptions
+	merged.Parent = parent
+
+	return self:Play(audioName, merged)
+end
+
+function AudioController.PlayRequest(self: AudioController, request: AudioRequest): Sound?
 	local config = Config.get()
 
 	if request.Cooldown then
 		if self.Cooldowns:IsOnCooldown(request.Cooldown.Key) then
 			if config.LOGGING.AUDIO then
-				print(`[{script.Name}] Cooldown blocked "{request.Sound.Name}" ({request.Cooldown.Key})`)
+				print(`[{script.Name}] Cooldown blocked "{request.Audio.Name}" ({request.Cooldown.Key})`)
 			end
 
 			return nil
@@ -166,7 +181,7 @@ function AudioController.PlayRequest(self: AudioController, request: SoundReques
 		self.Cooldowns:Set(request.Cooldown.Key, request.Cooldown.Duration)
 	end
 
-	local sound = request.Sound:Clone()
+	local sound = request.Audio:Clone()
 
 	if request.Properties then
 		for property, value in request.Properties :: { [string]: any } do
@@ -222,7 +237,7 @@ function AudioController.PlayRequest(self: AudioController, request: SoundReques
 	sound:Play()
 
 	if config.LOGGING.AUDIO then
-		print(`[{script.Name}] Playing "{request.Sound.Name}"`)
+		print(`[{script.Name}] Playing "{request.Audio.Name}"`)
 	end
 
 	if not sound.Looped then
@@ -234,6 +249,38 @@ function AudioController.PlayRequest(self: AudioController, request: SoundReques
 	end
 
 	return sound
+end
+
+--[=[
+    Fills in anything the request doesn't specify from the call options.
+    The request always wins. Returns a copy, so shared resolver tables are never mutated.
+]=]
+function AudioController._applyOptions(
+	self: AudioController,
+	request: AudioRequest,
+	options: AudioOptions
+): AudioRequest
+	local applied = table.clone(request)
+
+	applied.Position = request.Position or options.Position
+	applied.Parent = request.Parent or options.Parent
+	applied.Weld = request.Weld or options.Weld
+
+	if request.Visualize == nil then
+		applied.Visualize = options.Visualize
+	end
+
+	if options.Properties or request.Properties then
+		local properties: { [string]: any } = table.clone((options.Properties or {}) :: any)
+
+		for key, value in (request.Properties or {}) :: { [string]: any } do
+			properties[key] = value
+		end
+
+		applied.Properties = properties :: any
+	end
+
+	return applied
 end
 
 return AudioController

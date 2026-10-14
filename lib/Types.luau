@@ -333,37 +333,7 @@ export type GenericSpawnContext<T> = {
 	Parent: Instance?,
 }
 
-export type AudioController = {
-	Cooldowns: any,
-
-	Registry: { [string]: Sound },
-	Groups: { [string]: { Sound } },
-	Resolvers: AudioResolvers?,
-
-	CreateRequest: (self: AudioController, soundName: string, options: AudioOptions?) -> SoundRequest?,
-	RegisterSound: (self: AudioController, name: string, sound: Sound) -> (),
-	RegisterGroup: (self: AudioController, name: string, folder: Instance) -> (),
-	Play: (self: AudioController, soundName: string, options: AudioOptions?) -> Sound?,
-	PlayAt: (
-		self: AudioController,
-		soundName: string,
-		position: Vector3,
-		options: AudioOptions?
-	) -> Sound?,
-	PlayOn: (self: AudioController, soundName: string, parent: Instance, options: AudioOptions?) -> Sound?,
-	PlayRequest: (self: AudioController, request: SoundRequest) -> Sound?,
-}
-
-export type AudioResolvers = { [string]: (context: AudioContext?) -> SoundRequest? }
-
-export type AudioOptions = {
-	Weld: BasePart?,
-	Visualize: boolean?,
-	Context: AudioContext?,
-	Properties: SoundProperties?,
-}
-
-export type SoundProperties = {
+export type AudioProperties = {
 	RollOffMode: Enum.RollOffMode? | (() -> Enum.RollOffMode?),
 	RollOffMinDistance: number? | (() -> number?),
 	RollOffMaxDistance: number? | (() -> number?),
@@ -375,13 +345,24 @@ export type SoundProperties = {
 	RandomizePitch: (() -> number)?,
 }
 
+-- Open-ended so games can pass whatever their resolvers need.
 export type AudioContext = {
-	Animator: Animator,
-	Parameter: string,
+	Animator: Animator?,
+	Parameter: string?,
+	[string]: any,
 }
 
-export type SoundRequest = {
-	Sound: Sound,
+export type AudioOptions = {
+	Position: Vector3?,
+	Parent: Instance?,
+	Weld: BasePart?,
+	Visualize: boolean?,
+	Context: AudioContext?,
+	Properties: AudioProperties?,
+}
+
+export type AudioRequest = {
+	Audio: Sound,
 	Position: Vector3?,
 	Parent: Instance?,
 	Weld: BasePart?,
@@ -391,8 +372,31 @@ export type SoundRequest = {
 		Key: string,
 	}?,
 
-	Properties: SoundProperties?,
+	Properties: AudioProperties?,
 	Visualize: boolean?,
+}
+
+export type AudioResolverResult = AudioRequest | { AudioRequest }
+
+export type AudioResolver = (context: AudioContext, options: AudioOptions) -> AudioResolverResult?
+
+export type AudioResolvers = { [string]: AudioResolver }
+
+export type AudioController = {
+	Cooldowns: any,
+
+	Registry: { [string]: Sound },
+	Groups: { [string]: { Sound } },
+
+	RegisterAudio: (self: AudioController, name: string, sound: Sound) -> (),
+	RegisterGroup: (self: AudioController, name: string, folder: Instance) -> (),
+	CreateRequests: (self: AudioController, audioName: string, options: AudioOptions?) -> { AudioRequest },
+	Play: (self: AudioController, audioName: string, options: AudioOptions?) -> { Sound },
+	PlayAt: (self: AudioController, audioName: string, position: Vector3, options: AudioOptions?) -> { Sound },
+	PlayOn: (self: AudioController, audioName: string, parent: Instance, options: AudioOptions?) -> { Sound },
+	PlayRequest: (self: AudioController, request: AudioRequest) -> Sound?,
+
+	_applyOptions: (self: AudioController, request: AudioRequest, options: AudioOptions) -> AudioRequest,
 }
 
 export type DirectionalModes = {

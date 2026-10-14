@@ -12,7 +12,7 @@ local Types = require(script.Types)
 local DEFAULTS = require(script.Defaults)
 
 local Backbone = {
-	Version = "0.1.21",
+	Version = "0.1.22",
 }
 
 export type Janitor = Types.Janitor
@@ -52,14 +52,6 @@ export type ClientControllers = Types.ClientControllers
 export type ServerControllers = Types.ServerControllers
 export type SharedControllers = Types.SharedControllers
 
-export type AudioController = Types.AudioController
-export type AudioResolvers = Types.AudioResolvers
-export type AudioOptions = Types.AudioOptions
-
-export type SoundProperties = Types.SoundProperties
-export type AudioContext = Types.AudioContext
-export type SoundRequest = Types.SoundRequest
-
 export type Direction = Types.Direction
 export type CharacterController = Types.CharacterController
 export type DirectionalModes = Types.DirectionalModes
@@ -75,6 +67,15 @@ export type MarkerReachedPayload = Types.MarkerReachedPayload
 export type AnimationController = Types.AnimationController
 export type PlayInOrderPredicate = Types.PlayInOrderPredicate
 export type AnimatorClass = Types.AnimatorClass
+
+export type AudioProperties = Types.AudioProperties
+export type AudioContext = Types.AudioContext
+export type AudioOptions = Types.AudioOptions
+export type AudioRequest = Types.AudioRequest
+export type AudioResolverResult = Types.AudioResolverResult
+export type AudioResolver = Types.AudioResolver
+export type AudioResolvers = Types.AudioResolvers
+export type AudioController = Types.AudioController
 
 export type InputDevice = Types.InputDevice
 export type InputBinding = Types.InputBinding
