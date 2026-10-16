@@ -49,6 +49,7 @@ export type BackboneConfig = {
 	AUDIO: {
 		SOURCES: { Instance },
 		RESOLVERS: AudioResolvers,
+		CONTAINER: Instance,
 	},
 
 	COLLISION_GROUPS: {

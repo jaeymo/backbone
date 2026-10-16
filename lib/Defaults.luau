@@ -59,6 +59,7 @@ local BACKBONE_DEFAULTS: Types.BackboneConfig = {
 	AUDIO = {
 		SOURCES = { SoundService },
 		RESOLVERS = {},
+		CONTAINER = workspace,
 	},
 
 	ANIMATION = {

@@ -196,7 +196,6 @@ function AudioController.PlayRequest(self: AudioController, request: AudioReques
 
 	if request.Properties then
 		for property, value in request.Properties :: { [string]: any } do
-			-- continue here because we don't want to burn a RNG call on this property
 			if property == "RandomizePitch" then
 				continue
 			end
@@ -217,31 +216,33 @@ function AudioController.PlayRequest(self: AudioController, request: AudioReques
 		end
 	end
 
-	local parent: Instance?
+	local parent: Instance
+	local ownsPart = false
 
 	if request.Parent then
 		parent = request.Parent
-	else
-		parent = CACHED_PART:Clone()
+	elseif request.Position or request.Weld then
+		local part = CACHED_PART:Clone()
 
-		parent.CFrame = if request.Position
-			then CFrame.new(request.Position)
-			elseif request.Weld then request.Weld.CFrame
-			else CFrame.new()
-
-		parent.Parent = workspace
+		part.CFrame = if request.Position then CFrame.new(request.Position) else (request.Weld :: BasePart).CFrame
+		part.Parent = config.AUDIO.CONTAINER
 
 		if request.Visualize then
-			parent.Transparency = 0.75
+			part.Transparency = 0.75
 		end
 
 		if request.Weld then
 			local weld = Instance.new("WeldConstraint")
 
 			weld.Part0 = request.Weld
-			weld.Part1 = parent
-			weld.Parent = parent
+			weld.Part1 = part
+			weld.Parent = part
 		end
+
+		parent = part
+		ownsPart = true
+	else
+		parent = SoundService
 	end
 
 	sound.Parent = parent
@@ -253,8 +254,10 @@ function AudioController.PlayRequest(self: AudioController, request: AudioReques
 
 	if not sound.Looped then
 		sound.Ended:Once(function()
-			if parent and parent ~= request.Parent then
+			if ownsPart then
 				parent:Destroy()
+			elseif parent == SoundService then
+				sound:Destroy()
 			end
 		end)
 	end
