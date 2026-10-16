@@ -1,4 +1,6 @@
 --!strict
+local SoundService = game:GetService("SoundService")
+
 local root = script.Parent.Parent
 local util = root.Util
 
@@ -6,6 +8,8 @@ local Config = require(root.Core.Config)
 local CooldownClass = require(util.CooldownClass)
 local Types = require(root.Types)
 local ValidateDisabledController = require(util.ValidateDisabledController)
+
+local GROUP_ATTRIBUTE = "SoundGroup"
 
 -- Part to use when placing audio in the world
 local CACHED_PART = (function()
@@ -26,6 +30,9 @@ local AudioController = {
 	Cooldowns = CooldownClass.new(),
 	Registry = {} :: { [string]: Sound },
 	Groups = {} :: { [string]: { Sound } },
+
+	_groupCache = setmetatable({}, { __mode = "k" }) :: { [Sound]: SoundGroup | boolean },
+	_warnedGroups = {} :: { [string]: boolean },
 }
 
 export type AudioOptions = Types.AudioOptions
@@ -183,6 +190,10 @@ function AudioController.PlayRequest(self: AudioController, request: AudioReques
 
 	local sound = request.Audio:Clone()
 
+	if not sound.SoundGroup then
+		sound.SoundGroup = self:_getSoundGroup(request.Audio)
+	end
+
 	if request.Properties then
 		for property, value in request.Properties :: { [string]: any } do
 			-- continue here because we don't want to burn a RNG call on this property
@@ -252,6 +263,7 @@ function AudioController.PlayRequest(self: AudioController, request: AudioReques
 end
 
 --[=[
+    @priv
     Fills in anything the request doesn't specify from the call options.
     The request always wins. Returns a copy, so shared resolver tables are never mutated.
 ]=]
@@ -281,6 +293,73 @@ function AudioController._applyOptions(
 	end
 
 	return applied
+end
+
+--[=[
+    @priv
+    Finds the SoundGroup in SoundService that a SoundGroup attribute refers to.
+    Accepts a plain name ("Effects", searched recursively) or a path ("World/Effects").
+]=]
+function AudioController._findGroup(self: AudioController, reference: string): SoundGroup?
+	local found: Instance? = SoundService
+
+	for _, segment in string.split(reference, "/") do
+		found = if found == SoundService
+			then SoundService:FindFirstChild(segment, true)
+			else if found then found:FindFirstChild(segment) else nil
+
+		if not found then
+			return nil
+		end
+	end
+
+	if found and found:IsA("SoundGroup") then
+		return found
+	end
+
+	return nil
+end
+
+--[=[
+    @priv
+    Walks up from the asset to the nearest SoundGroup attribute and resolves it. Cached per asset.
+    Resolved lazily (at play time, not registration) so SoundService has had time to replicate its groups.
+    Failed lookups are not cached, so a group that shows up later still gets picked up.
+]=]
+function AudioController._getSoundGroup(self: AudioController, asset: Sound): SoundGroup?
+	local cached = self._groupCache[asset]
+
+	if cached ~= nil then
+		return if typeof(cached) == "Instance" then cached else nil
+	end
+
+	local node: Instance? = asset
+
+	while node do
+		local reference = node:GetAttribute(GROUP_ATTRIBUTE)
+
+		if typeof(reference) == "string" then
+			local group = self:_findGroup(reference)
+
+			if group then
+				self._groupCache[asset] = group
+				return group
+			end
+
+			if not self._warnedGroups[reference] then
+				self._warnedGroups[reference] = true
+				warn(`[{script.Name}] "{asset:GetFullName()}" references missing SoundGroup "{reference}"`)
+			end
+
+			return nil
+		end
+
+		node = node.Parent
+	end
+
+	self._groupCache[asset] = false
+
+	return nil
 end
 
 return AudioController

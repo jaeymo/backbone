@@ -345,7 +345,6 @@ export type AudioProperties = {
 	RandomizePitch: (() -> number)?,
 }
 
--- Open-ended so games can pass whatever their resolvers need.
 export type AudioContext = {
 	Animator: Animator?,
 	Parameter: string?,
@@ -388,6 +387,9 @@ export type AudioController = {
 	Registry: { [string]: Sound },
 	Groups: { [string]: { Sound } },
 
+	_groupCache: { [Sound]: SoundGroup | boolean },
+	_warnedGroups: { [string]: boolean },
+
 	RegisterAudio: (self: AudioController, name: string, sound: Sound) -> (),
 	RegisterGroup: (self: AudioController, name: string, folder: Instance) -> (),
 	CreateRequests: (self: AudioController, audioName: string, options: AudioOptions?) -> { AudioRequest },
@@ -397,6 +399,8 @@ export type AudioController = {
 	PlayRequest: (self: AudioController, request: AudioRequest) -> Sound?,
 
 	_applyOptions: (self: AudioController, request: AudioRequest, options: AudioOptions) -> AudioRequest,
+	_findGroup: (self: AudioController, reference: string) -> SoundGroup?,
+	_getSoundGroup: (self: AudioController, asset: Sound) -> SoundGroup?,
 }
 
 export type DirectionalModes = {
