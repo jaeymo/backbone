@@ -9,6 +9,7 @@ Validator.OPAQUE = {
 	["AUDIO.SOURCES"] = true,
 	["AUDIO.RESOLVERS"] = true,
 	["INPUT.CONFIG"] = true,
+	["PHYSICS.COLLISION_MATRIX"] = true,
 } :: { [string]: boolean }
 
 -- Controller -> controllers it hard-requires
