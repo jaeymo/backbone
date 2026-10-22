@@ -254,10 +254,10 @@ function AudioController.PlayRequest(self: AudioController, request: AudioReques
 
 	if not sound.Looped then
 		sound.Ended:Once(function()
+			sound:Destroy()
+
 			if ownsPart then
 				parent:Destroy()
-			elseif parent == SoundService then
-				sound:Destroy()
 			end
 		end)
 	end
