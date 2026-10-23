@@ -125,6 +125,17 @@ function CharacterController.GetCharacterForPlayer(self: CharacterController, pl
 end
 
 --[=[
+	Returns an array of all currently tracked `Character`s.
+]=]
+function CharacterController.GetCharacters(self: CharacterController): { Character }
+	local characters = {}
+	for _, character in self._playerToCharacter do
+		table.insert(characters, character)
+	end
+	return characters
+end
+
+--[=[
 	Fires `callback` whenever `player`'s character is added — immediately if a
 	`Character` is already tracked for them, and again on every future respawn.
 ]=]

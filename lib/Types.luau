@@ -442,6 +442,7 @@ export type CharacterController = {
 	LocalCharacterRemoved: Signal.Signal<Character>,
 	IsShiftLocked: (self: CharacterController) -> boolean,
 	GetCharacterForPlayer: (self: CharacterController, player: Player) -> Character?,
+	GetCharacters: (self: CharacterController) -> { Character },
 
 	BindAddedToPlayer: (
 		self: CharacterController,
