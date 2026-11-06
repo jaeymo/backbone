@@ -1,4 +1,43 @@
 --!strict
+--[=[
+	PhysicsController
+
+	Two jobs: configuring collision groups, and toggling physics (anchoring) on registered
+	objects by distance, e.g. to put far-away props to sleep.
+
+	Collision groups are configured with a matrix, either in config (applied on Awake) or at
+	runtime with `:ApplyCollisionMatrix()`. Only declare the pairs that should collide: every
+	other pair of different groups the matrix names is set non-collidable. A group's collision
+	with itself, and groups the matrix doesn't name, are only changed if you declare them.
+	Groups are registered for you.
+
+	```lua
+	Backbone:Configure({
+		PHYSICS = {
+			COLLISION_MATRIX = {
+				Character = { Default = true, Debris = true },
+				Debris = { Default = true, Debris = false },
+				-- Debris <-> Debris is declared false, Character <-> Character keeps colliding
+			},
+		},
+	})
+
+	-- One-off changes
+	PhysicsController:SetGroupsCollidable("Character", "Debris", false)
+	```
+
+	Physics objects anchor every BasePart under `source` while disabled:
+
+	```lua
+	local object = PhysicsController.newPhysicsObject(crate, true, function()
+		return crate:GetPivot()
+	end)
+	PhysicsController:RegisterPhysicsObject(guid, object)
+
+	PhysicsController:DeactivatePhysicsWithinRadius(500, Vector3.zero)
+	object.PhysicsStateChanged:Connect(function(isEnabled) end)
+	```
+]=]
 local PhysicsService = game:GetService("PhysicsService")
 
 local root = script.Parent.Parent
@@ -34,6 +73,14 @@ local PhysicsController = {
 	if next(matrix :: any) then
 		self:ApplyCollisionMatrix(matrix)
 	end
+end
+
+--[=[
+	@priv
+	Canonical key so matrix[A][B] and matrix[B][A] refer to the same pair
+]=]
+local function pairKey(a: string, b: string): string
+	return if a <= b then `{a}|{b}` else `{b}|{a}`
 end
 
 --[=[
@@ -146,37 +193,57 @@ function PhysicsController.SetGroupsCollidable(self: PhysicsController, a: strin
 	PhysicsService:CollisionGroupSetCollidable(a, b, collidable)
 end
 
+--[=[
+	Applies `matrix`: declared pairs are set as declared, and every undeclared pair of different
+	groups the matrix names is set non-collidable. Undeclared self pairs (A <-> A) and groups
+	the matrix doesn't name are left untouched.
+]=]
 function PhysicsController.ApplyCollisionMatrix(self: PhysicsController, matrix: CollisionMatrix)
 	ValidateDisabledController("PHYSICS")
 
-	local resolved: { [string]: boolean } = {}
-	local endpoints: { [string]: { string } } = {}
+	local groups: { string } = {}
+	local known: { [string]: boolean } = {}
+	local declared: { [string]: boolean } = {}
+
+	local function addGroup(name: string)
+		if known[name] then
+			return
+		end
+
+		known[name] = true
+		table.insert(groups, name)
+		ensureGroup(name)
+	end
 
 	for a, row in matrix do
-		ensureGroup(a)
+		addGroup(a)
 
 		for b, collidable in row do
-			ensureGroup(b)
+			addGroup(b)
 
-			-- canonical ordering so matrix[A][B] and matrix[B][A] hit the same key
-			local first, second = if a <= b then a else b, if a <= b then b else a
-			local key = `{first}|{second}`
+			local key = pairKey(a, b)
+			local existing = declared[key]
 
-			local existing = resolved[key]
 			if existing ~= nil and existing ~= collidable then
-				warn(`[BACKBONE] Collision matrix conflict for "{first}" <-> "{second}", defaulting to non-collidable`)
-				resolved[key] = false
+				warn(`[BACKBONE] Collision matrix conflict for "{a}" <-> "{b}", defaulting to non-collidable`)
+				declared[key] = false
 			else
-				resolved[key] = collidable
+				declared[key] = collidable
 			end
-
-			endpoints[key] = { first, second }
 		end
 	end
 
-	for key, collidable in resolved do
-		local pair = endpoints[key]
-		PhysicsService:CollisionGroupSetCollidable(pair[1], pair[2], collidable)
+	for i, a in groups do
+		-- Defaulting A <-> A too would break e.g. Default <-> Default just because Default was named
+		local selfCollidable = declared[pairKey(a, a)]
+		if selfCollidable ~= nil then
+			PhysicsService:CollisionGroupSetCollidable(a, a, selfCollidable)
+		end
+
+		for j = i + 1, #groups do
+			local b = groups[j]
+			PhysicsService:CollisionGroupSetCollidable(a, b, declared[pairKey(a, b)] == true)
+		end
 	end
 end
 

@@ -1,4 +1,63 @@
 --!strict
+--[=[
+	InputController (client only)
+
+	Named, device-aware input. You declare Actions (buttons) and Axes (2D values) once in
+	`INPUT.CONFIG`, then bind to them by name. Gameplay code never touches KeyCodes, so
+	rebinding, blocking and context switching all happen in one place.
+
+	```lua
+	Backbone:Configure({
+		INPUT = {
+			CONFIG = {
+				DefaultContext = "Gameplay",
+				Actions = {
+					Attack = {
+						Name = "Attack",
+						Group = "Combat", -- Block("Combat") blocks every Action in the Group
+						Contexts = { "Gameplay" }, -- omit to make it global
+						Defaults = {
+							Mouse = { { UserInputType = Enum.UserInputType.MouseButton1 } },
+							Gamepad = { { Keycode = Enum.KeyCode.ButtonR2 } },
+						},
+						-- Held for 0.4s fires "HeavyAttack" instead; a quicker release fires "Attack"
+						Hold = { Name = "HeavyAttack", Duration = 0.4 },
+					},
+				},
+				Axes = {
+					Move = {
+						Name = "Move",
+						Sources = { Keyboard = "WASD", Gamepad = "Thumbstick1", Touch = "Touchpad" },
+					},
+				},
+			},
+		},
+	})
+	```
+
+	```lua
+	-- Callbacks get "Began" or "Ended". Higher priority callbacks start first
+	local unbind = InputController:BindAction("Attack", function(state, input)
+		if state == "Began" then swing() end
+	end)
+	unbind()
+
+	InputController:IsActionDown("Attack")
+	local move: Vector2 = InputController:GetAxis("Move") -- read every frame
+
+	InputController:Block("Combat")   -- refcounted: every Block needs its own Unblock
+	InputController:Unblock("Combat")
+
+	InputController:SwitchContext("Vehicle") -- held Actions not in "Vehicle" get a synthetic Ended
+	InputController:Rebind("Attack", "Keyboard", { { Keycode = Enum.KeyCode.F } })
+	```
+
+	Things to know:
+	- Blocking or leaving a context releases held Actions with a synthetic "Ended", using the
+	  InputObject from "Began", so don't read its UserInputState.
+	- `GetAxis` returns zero while the Axis is blocked or out of context. MouseDelta is the raw
+	  per-frame delta, so smooth it yourself.
+]=]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local StarterPlayer = game:GetService("StarterPlayer")

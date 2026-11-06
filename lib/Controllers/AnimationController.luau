@@ -1,4 +1,49 @@
 --!strict
+--[=[
+	AnimationController
+
+	Named animation groups. A group (`AnimatorClass`) wraps one Animator. It loads animations
+	by name, then plays, stops, tags and variant-swaps them, so gameplay code refers to "Attack"
+	instead of track objects. There's one group per `groupId`; asking for an existing id
+	returns the same group.
+
+	```lua
+	local animations = AnimationController.new("Sword", humanoid.Animator) -- same as :Get()
+
+	animations:LoadFromConfig({
+		Animations = {
+			Idle = { Id = 123, Looped = true, Tags = { "Locomotion" } },
+			Attack = { Id = 456, FadeTime = 0.1, Priority = Enum.AnimationPriority.Action },
+			SwordIdle = { Id = 789, Looped = true },
+		},
+		-- Variants remap names: with "Sword" active, Play("Idle") plays "SwordIdle"
+		Variants = { Sword = { Idle = "SwordIdle" } },
+	}):andThen(function()
+		animations:Play("Idle")
+	end)
+
+	animations:Play("Attack", { Speed = 1.5, SkipIfPlaying = true })
+	animations:Stop("Attack", 0.2)
+	animations:SetVariant("Sword")
+	animations:StopAllWithTag("Locomotion")
+	animations:PlayInOrder({ "Draw", "Attack" }):andThen(onComboFinished)
+
+	-- Keyframe markers from every group
+	AnimationController.AnimationMarkerReached:Connect(function(group, payload)
+		print(payload.AnimationName, payload.MarkerName)
+	end)
+
+	AnimationController:Destroy("Sword")
+	```
+
+	The local character's group is created for you (see `CHARACTER.ANIMATION_GROUP_ID`) and
+	is available as `CharacterController:GetLocalCharacter().Animation`.
+
+	Things to know:
+	- `LoadFromConfig` rejects if the group has no Animator or the Animator isn't in workspace.
+	- A group's Animator can't be swapped once set. For a new Animator (e.g. after a respawn),
+	  `:Destroy()` the group and create it again.
+]=]
 local HttpService = game:GetService("HttpService")
 local KeyframeSequenceProvider = game:GetService("KeyframeSequenceProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

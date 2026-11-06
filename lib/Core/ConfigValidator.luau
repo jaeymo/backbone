@@ -13,8 +13,12 @@ Validator.OPAQUE = {
 } :: { [string]: boolean }
 
 -- Controller -> controllers it hard-requires
-local DEPENDENCIES: { [string]: { string } } = {
-	CHARACTER = { "ENTITY" },
+local DEPENDENCIES: { [string]: { string } } = {}
+
+-- Settings that were renamed or removed, so upgrading users get a pointer instead of "typo?"
+local MIGRATIONS: { [string]: string } = {
+	["TAGS.AGENT"] = "was removed in 0.2.0 along with the Agent class; characters are tagged with TAGS.CHARACTER",
+	["CHARACTER.CLIENT_CHARACTER_MODEL_TIMEOUT"] = "was renamed to CHARACTER.LOAD_TIMEOUT in 0.2.0",
 }
 
 local DEVICES = { Keyboard = true, Mouse = true, Gamepad = true, Touch = true }
@@ -39,7 +43,8 @@ local function walk(actual: any, schema: any, path: string, r: Report)
 		local expected = schema[key]
 
 		if expected == nil then
-			table.insert(r.errors, `unknown setting "{p}" (typo?)`)
+			local migration = MIGRATIONS[p]
+			table.insert(r.errors, if migration then `"{p}" {migration}` else `unknown setting "{p}" (typo?)`)
 		elseif Validator.OPAQUE[p] then
 			if type(value) ~= "table" then
 				table.insert(r.errors, `"{p}" must be a table, got {typeof(value)}`)
@@ -85,7 +90,7 @@ local function checkRanges(c: any, r: Report)
 		"ANIMATION.MARKER_FETCH_RETRIES must be a whole number >= 1"
 	)
 	check(c.ANIMATION.MARKER_FETCH_BACKOFF_SECONDS >= 0, "ANIMATION.MARKER_FETCH_BACKOFF_SECONDS must be >= 0")
-	check(c.CHARACTER.CLIENT_CHARACTER_MODEL_TIMEOUT > 0, "CHARACTER.CLIENT_CHARACTER_MODEL_TIMEOUT must be > 0")
+	check(c.CHARACTER.LOAD_TIMEOUT > 0, "CHARACTER.LOAD_TIMEOUT must be > 0")
 	check(c.ENTITY.CLIENT_ENTITY_GUID_TIMEOUT > 0, "ENTITY.CLIENT_ENTITY_GUID_TIMEOUT must be > 0")
 	check(
 		c.INPUT.THUMBSTICK_DEADZONE >= 0 and c.INPUT.THUMBSTICK_DEADZONE < 1,
@@ -161,6 +166,52 @@ local function checkAudio(audio: any, r: Report)
 			r.warnings,
 			"AUDIO is enabled but AUDIO.SOURCES is empty; sounds must be added via :RegisterSound()"
 		)
+	end
+end
+
+--[=[
+	@priv
+	Pairs that aren't declared default to non-collidable, so the only real mistakes are
+	malformed entries and a pair declared twice with different values
+]=]
+local function checkCollisionMatrix(matrix: any, r: Report)
+	local declared: { [string]: { Collidable: boolean, Where: string } } = {}
+
+	for a, row in matrix do
+		local where = `PHYSICS.COLLISION_MATRIX.{tostring(a)}`
+
+		if type(a) ~= "string" or a == "" then
+			table.insert(r.errors, `{where}: collision group names must be non-empty strings`)
+			continue
+		end
+
+		if type(row) ~= "table" then
+			table.insert(r.errors, `{where} must be a table of [group] = boolean, got {typeof(row)}`)
+			continue
+		end
+
+		for b, collidable in row do
+			local entry = `{where}.{tostring(b)}`
+
+			if type(b) ~= "string" or b == "" then
+				local hint = if type(collidable) == "string" then ` (did you mean {collidable} = true?)` else ""
+				table.insert(r.errors, `{entry}: collision group names must be non-empty strings{hint}`)
+			elseif type(collidable) ~= "boolean" then
+				table.insert(r.errors, `{entry} must be a boolean, got {typeof(collidable)}`)
+			else
+				local key = if a <= b then `{a}|{b}` else `{b}|{a}`
+				local existing = declared[key]
+
+				if existing and existing.Collidable ~= collidable then
+					table.insert(
+						r.errors,
+						`{entry} is {tostring(collidable)} but {existing.Where} is {tostring(existing.Collidable)}`
+					)
+				elseif not existing then
+					declared[key] = { Collidable = collidable, Where = entry }
+				end
+			end
+		end
 	end
 end
 
@@ -285,6 +336,9 @@ function Validator.check(config: any)
 		end
 		if config.ENABLED_CONTROLLERS.INPUT then
 			checkInput(config.INPUT.CONFIG, r)
+		end
+		if config.ENABLED_CONTROLLERS.PHYSICS then
+			checkCollisionMatrix(config.PHYSICS.COLLISION_MATRIX, r)
 		end
 	end
 

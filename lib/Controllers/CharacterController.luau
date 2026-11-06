@@ -1,5 +1,76 @@
 --!strict
-local CollectionService = game:GetService("CollectionService")
+--[=[
+	CharacterController
+
+	Tracks every player's character on both the server and the client, and wraps each one in a
+	`CharacterObject`: a typed handle to the Roblox character `Model` and its essential parts.
+
+	```lua
+	character.Player     -- Player
+	character.Model      -- the Roblox character Model (what `player.Character` points to)
+	character.Humanoid   -- Humanoid
+	character.Root       -- HumanoidRootPart
+	character.Animator   -- Animator
+	character.Animation  -- AnimatorClass? (local character only, see CHARACTER.ANIMATION_GROUP_ID)
+	character.IsLocal    -- true for the local player's character on the client
+	character.Janitor    -- cleaned up when this character is removed
+	```
+
+	A `CharacterObject` lives for one life. Respawning creates a new one, so don't hold on to it
+	across respawns. Attach per-life work to `character.Janitor` instead and it cleans itself up.
+
+	Lifecycle:
+	- `CharacterAdded` fires once the character's Humanoid, HumanoidRootPart and Animator exist
+	  (waiting at most `CHARACTER.LOAD_TIMEOUT` seconds).
+	- `CharacterRemoved` fires when Roblox removes the Model (respawn or leaving), not on death.
+	  Use `character.Humanoid.Died` for death. Fields are still readable during this signal;
+	  the object is destroyed right after.
+	- The `LocalCharacter*` signals fire on the client for the local player's character only.
+
+	Getting the local character (client only):
+
+	```lua
+	-- Right now, or nil if it hasn't spawned yet (or is between lives)
+	local character = CharacterController:GetLocalCharacter()
+
+	-- Waits for it if needed. Returns a Promise
+	CharacterController:GetLocalCharacterAsync():andThen(function(character)
+		character.Humanoid.WalkSpeed = 24
+	end)
+
+	-- Or yield the current thread
+	local character = CharacterController:GetLocalCharacterAsync():expect()
+	```
+
+	Running something for every life:
+
+	```lua
+	-- Fires right away for the current character (if any), then again on every respawn
+	CharacterController:BindAddedToPlayer(Players.LocalPlayer, function(character)
+		character.Janitor:Add(character.Humanoid.Died:Connect(function()
+			print("died")
+		end))
+	end)
+
+	-- Server: every player's character
+	CharacterController.CharacterAdded:Connect(function(character)
+		print(`{character.Player.Name} spawned`)
+	end)
+
+	-- Hit detection: resolve a part back to its character
+	local hitCharacter = CharacterController:GetCharacterFromInstance(raycastResult.Instance)
+	```
+
+	Integrating your own Entity system: CharacterController doesn't depend on EntityController.
+	Wrap characters yourself and tie the wrapper to the character's lifetime.
+
+	```lua
+	CharacterController.CharacterAdded:Connect(function(character)
+		local entity = MyEntities.fromCharacter(character)
+		character.Janitor:Add(entity, "Destroy")
+	end)
+	```
+]=]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -10,7 +81,8 @@ local packages = root.Parent
 
 local CharacterClass = require(root.Classes.Character)
 local Config = require(root.Core.Config)
-local EntityController = require(root.Controllers.EntityController)
+local Janitor = require(packages.Janitor)
+local Promise = require(packages.Promise)
 local Signal = require(packages.Signal)
 local Types = require(root.Types)
 local ValidateDisabledController = require(util.ValidateDisabledController)
@@ -18,44 +90,92 @@ local ValidateDisabledController = require(util.ValidateDisabledController)
 local IS_CLIENT = RunService:IsClient()
 local IS_SERVER = RunService:IsServer()
 
-local CharacterController = {
-	CharacterAdded = Signal.new() :: Signal.Signal<Types.Character>,
-	CharacterRemoved = Signal.new() :: Signal.Signal<Types.Character>,
-	LocalCharacterAdded = Signal.new() :: Signal.Signal<Types.Character>,
-	LocalCharacterRemoved = Signal.new() :: Signal.Signal<Types.Character>,
-
-	LocalCharacter = (nil :: any) :: Character?,
-	_playerToCharacter = {} :: { [Player]: Character },
+-- Members renamed in 0.2.0. They keep working, but warn once
+local RENAMED_MEMBERS: { [string]: string } = {
+	LocalCharacter = "LocalCharacterObject",
+	BindRemovingToPlayer = "BindRemovedToPlayer",
 }
 
---[=[
-	@priv
-]=]
-local function getPlayerFromCharacter(character: Character): Player?
-	return Players:GetPlayerFromCharacter(character.Agent:GetModel())
+export type CharacterObject = Types.CharacterObject
+
+type CharacterParts = CharacterClass.CharacterParts
+
+local CharacterController = {
+	CharacterAdded = Signal.new() :: Signal.Signal<CharacterObject>,
+	CharacterRemoved = Signal.new() :: Signal.Signal<CharacterObject>,
+	LocalCharacterAdded = Signal.new() :: Signal.Signal<CharacterObject>,
+	LocalCharacterRemoved = Signal.new() :: Signal.Signal<CharacterObject>,
+
+	LocalCharacterObject = nil :: CharacterObject?,
+
+	_characters = {} :: { [Player]: CharacterObject },
+	_playerJanitors = {} :: { [Player]: Janitor.Janitor },
+}
+
+export type CharacterController = typeof(CharacterController)
+
+do
+	local warned: { [string]: boolean } = {}
+
+	setmetatable(CharacterController :: any, {
+		__index = function(self: any, key: string): any
+			local replacement = RENAMED_MEMBERS[key]
+			if not replacement then
+				return nil
+			end
+
+			if not warned[key] then
+				warned[key] = true
+				local traceback = debug.traceback("", 2)
+				warn(
+					`[BACKBONE] CharacterController.{key} is deprecated, use CharacterController.{replacement} instead.{traceback}`
+				)
+			end
+
+			return rawget(self, replacement)
+		end,
+	})
 end
 
 --[=[
-	@priv 
+	@priv
+	Waits for the parts every CharacterObject needs, sharing one deadline between them.
 ]=]
-local function getVariables(characterModel: Model): Types.CharacterRuntimeBuildDefinition?
-	local humanoid = characterModel:WaitForChild("Humanoid") :: Humanoid?
-	local animator = humanoid and humanoid:WaitForChild("Animator") :: Animator?
-	local root = characterModel:WaitForChild("HumanoidRootPart") :: BasePart?
+local function waitForParts(model: Model, timeout: number): (CharacterParts?, string?)
+	local deadline = os.clock() + timeout
 
-	if not humanoid or not animator or not root then
-		warn(
-			`[{script.Name}] Character "{characterModel.Name}" is missing one of the following: Humanoid: [{humanoid}] Animator: [{animator}] Root: [{root}]`
-		)
-		return nil
+	local function waitFor(parent: Instance, name: string): Instance?
+		local child = parent:FindFirstChild(name)
+		local remaining = deadline - os.clock()
+
+		if child or remaining <= 0 then
+			return child
+		end
+
+		return parent:WaitForChild(name, remaining)
 	end
 
-	return {
-		Character = characterModel,
-		Humanoid = humanoid,
-		Root = root,
-		Animator = animator,
-	}
+	local humanoid = waitFor(model, "Humanoid")
+	local rootPart = waitFor(model, "HumanoidRootPart")
+	local animator = if humanoid then waitFor(humanoid, "Animator") else nil
+
+	if
+		humanoid
+		and humanoid:IsA("Humanoid")
+		and rootPart
+		and rootPart:IsA("BasePart")
+		and animator
+		and animator:IsA("Animator")
+	then
+		return {
+			Model = model,
+			Humanoid = humanoid,
+			Root = rootPart,
+			Animator = animator,
+		}, nil
+	end
+
+	return nil, `Humanoid: [{humanoid}] HumanoidRootPart: [{rootPart}] Animator: [{animator}]`
 end
 
 --[=[
@@ -63,114 +183,156 @@ end
 ]=]
 function CharacterController.OnAwake(self: CharacterController)
 	ValidateDisabledController("CHARACTER")
-
-	local config = Config.get()
-	self:_bindCharacterEventsToEntity()
-
-	EntityController:RegisterType("Character", {
-		Class = CharacterClass,
-		Definitions = nil, -- We don't need definitions for characters
-		BeforeSpawn = function(registrationContext: Types.RegistrationContext)
-			if IS_CLIENT then
-				local timeout = config.CHARACTER.CLIENT_CHARACTER_MODEL_TIMEOUT
-				local object: Character = registrationContext.Object
-
-				local characterModel: Model?
-				local start = os.clock()
-
-				repeat
-					task.wait()
-
-					characterModel = registrationContext.Entity.Model:FindFirstChildOfClass("Model")
-
-					if os.clock() - start >= timeout then
-						warn(`[{script.Name}] It took longer than {timeout}s to load the character under the entity.`)
-						break
-					end
-				until characterModel
-
-				if not characterModel then
-					return
-				end
-
-				local runtimeDefinition = getVariables(characterModel)
-				if not runtimeDefinition then
-					return
-				end
-
-				object:Init(runtimeDefinition)
-			end
-		end,
-	})
 end
 
 --[=[
-    Called after all modules have finished initializing. Begin runtime behavior here.
+	Called after all modules have finished initializing. Begin runtime behavior here.
 ]=]
 function CharacterController.OnStart(self: CharacterController)
 	ValidateDisabledController("CHARACTER")
 
-	self:_bindPlayers()
-end
-
-export type Character = Types.Character
-
-export type CharacterController = typeof(CharacterController)
-
---[=[
-	Returns the currently tracked `Character` for `player`, if one exists.
-]=]
-function CharacterController.GetCharacterForPlayer(self: CharacterController, player: Player): Character?
-	return self._playerToCharacter[player]
+	-- Deferred so listeners connected in any module's OnStart still see the characters that already exist
+	task.defer(self._bindPlayers, self)
 end
 
 --[=[
-	Returns an array of all currently tracked `Character`s.
+	Client only. Returns the local player's `CharacterObject`, or nil if it hasn't spawned yet
+	or is between lives. Same as reading `LocalCharacterObject`.
 ]=]
-function CharacterController.GetCharacters(self: CharacterController): { Character }
+function CharacterController.GetLocalCharacter(self: CharacterController): CharacterObject?
+	if not IS_CLIENT then
+		error(`[{script.Name}] :GetLocalCharacter() is client-only`, 2)
+	end
+
+	return self.LocalCharacterObject
+end
+
+--[=[
+	Client only. Resolves with the local player's `CharacterObject`: immediately if it exists,
+	otherwise as soon as the next one loads. Each call resolves with the character current
+	at that moment; it won't follow respawns. Use `:expect()` to yield instead.
+]=]
+function CharacterController.GetLocalCharacterAsync(self: CharacterController): Promise.TypedPromise<CharacterObject>
+	if not IS_CLIENT then
+		error(`[{script.Name}] :GetLocalCharacterAsync() is client-only`, 2)
+	end
+
+	return self:GetCharacterForPlayerAsync(Players.LocalPlayer)
+end
+
+--[=[
+	Returns `player`'s current `CharacterObject`, or nil if they don't have one loaded.
+]=]
+function CharacterController.GetCharacterForPlayer(self: CharacterController, player: Player): CharacterObject?
+	return self._characters[player]
+end
+
+--[=[
+	Resolves with `player`'s `CharacterObject`: immediately if it exists, otherwise as soon as
+	the next one loads. Rejects if the player leaves first.
+]=]
+function CharacterController.GetCharacterForPlayerAsync(
+	self: CharacterController,
+	player: Player
+): Promise.TypedPromise<CharacterObject>
+	local existing = self._characters[player]
+	if existing then
+		return Promise.resolve(existing)
+	end
+
+	return Promise.new(function(resolve, reject, onCancel)
+		if player.Parent == nil then
+			reject(`[{script.Name}] {player.Name} left before their character loaded`)
+			return
+		end
+
+		local janitor = Janitor.new()
+
+		janitor:Add(self.CharacterAdded:Connect(function(character: CharacterObject)
+			if character.Player == player then
+				janitor:Destroy()
+				resolve(character)
+			end
+		end))
+
+		janitor:Add(Players.PlayerRemoving:Connect(function(leaving: Player)
+			if leaving == player then
+				janitor:Destroy()
+				reject(`[{script.Name}] {player.Name} left before their character loaded`)
+			end
+		end))
+
+		onCancel(function()
+			janitor:Destroy()
+		end)
+	end)
+end
+
+--[=[
+	Returns the `CharacterObject` whose Model is, or contains, `instance`. Handy for resolving
+	a hit part back to a character.
+]=]
+function CharacterController.GetCharacterFromInstance(self: CharacterController, instance: Instance): CharacterObject?
+	for _, character in self._characters do
+		if instance == character.Model or instance:IsDescendantOf(character.Model) then
+			return character
+		end
+	end
+
+	return nil
+end
+
+--[=[
+	Returns an array of all currently tracked `CharacterObject`s.
+]=]
+function CharacterController.GetCharacters(self: CharacterController): { CharacterObject }
 	local characters = {}
-	for _, character in self._playerToCharacter do
+	for _, character in self._characters do
 		table.insert(characters, character)
 	end
 	return characters
 end
 
 --[=[
-	Fires `callback` whenever `player`'s character is added — immediately if a
-	`Character` is already tracked for them, and again on every future respawn.
+	Calls `callback` with `player`'s character right away if one is loaded, and again on
+	every future respawn. Disconnect the returned connection to stop.
 ]=]
 function CharacterController.BindAddedToPlayer(
 	self: CharacterController,
 	player: Player,
-	callback: (character: Character) -> ()
+	callback: (character: CharacterObject) -> ()
 ): Signal.Connection
-	local existing = self._playerToCharacter[player]
+	local existing = self._characters[player]
 	if existing then
 		task.spawn(callback, existing)
 	end
 
-	return self.CharacterAdded:Connect(function(character: Character)
-		if getPlayerFromCharacter(character) == player then
+	return self.CharacterAdded:Connect(function(character: CharacterObject)
+		if character.Player == player then
 			callback(character)
 		end
 	end)
 end
 
 --[=[
-	Fires `callback` whenever `player`'s character is removed
+	Calls `callback` whenever `player`'s character is removed. Disconnect the returned
+	connection to stop.
 ]=]
-function CharacterController.BindRemovingToPlayer(
+function CharacterController.BindRemovedToPlayer(
 	self: CharacterController,
 	player: Player,
-	callback: (character: Character) -> ()
-)
-	return self.CharacterRemoved:Connect(function(character: Character)
-		if getPlayerFromCharacter(character) == player then
+	callback: (character: CharacterObject) -> ()
+): Signal.Connection
+	return self.CharacterRemoved:Connect(function(character: CharacterObject)
+		if character.Player == player then
 			callback(character)
 		end
 	end)
 end
 
+--[=[
+	Client only. Returns whether the local player is currently shift-locked.
+]=]
 function CharacterController.IsShiftLocked(self: CharacterController): boolean
 	return Players.LocalPlayer.DevEnableMouseLock and UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter
 end
@@ -185,7 +347,7 @@ end
 ]=]
 function CharacterController.GetMoveDirection(
 	self: CharacterController,
-	character: Character,
+	character: CharacterObject,
 	previous: Types.Direction?,
 	directional: Types.DirectionalModes?
 ): Types.Direction
@@ -197,15 +359,13 @@ function CharacterController.GetMoveDirection(
 	end
 
 	local last: Types.Direction = previous or "Forward"
+	local moveDirection = character.Humanoid.MoveDirection
 
-	local agent = character.Agent
-	local humanoid = agent:GetHumanoid()
-
-	if humanoid.MoveDirection.Magnitude == 0 then
+	if moveDirection.Magnitude == 0 then
 		return last
 	end
 
-	local localMove = agent:GetRoot().CFrame:VectorToObjectSpace(humanoid.MoveDirection)
+	local localMove = character.Root.CFrame:VectorToObjectSpace(moveDirection)
 	local x, z = localMove.X, localMove.Z
 
 	local bias = 0.1
@@ -220,175 +380,148 @@ function CharacterController.GetMoveDirection(
 end
 
 --[=[
-    @priv  
+	@priv
 ]=]
-function CharacterController._onCharacterAdded(self: CharacterController, character: Model, isLocal: boolean?)
-	local config = Config.get()
+function CharacterController._bindPlayers(self: CharacterController)
+	for _, player in Players:GetPlayers() do
+		self:_watchPlayer(player)
+	end
 
-	local player = Players:GetPlayerFromCharacter(character)
-	if not player then
+	Players.PlayerAdded:Connect(function(player: Player)
+		self:_watchPlayer(player)
+	end)
+
+	Players.PlayerRemoving:Connect(function(player: Player)
+		self:_unwatchPlayer(player)
+	end)
+end
+
+--[=[
+	@priv
+]=]
+function CharacterController._watchPlayer(self: CharacterController, player: Player)
+	if self._playerJanitors[player] then
 		return
 	end
 
-	local runtimeDefinition = getVariables(character)
-	if not runtimeDefinition then
+	local janitor = Janitor.new()
+	self._playerJanitors[player] = janitor
+
+	janitor:Add(player.CharacterAdded:Connect(function(model: Model)
+		self:_onCharacterAdded(player, model)
+	end))
+
+	janitor:Add(player.CharacterRemoving:Connect(function(model: Model)
+		local character = self._characters[player]
+		if character and character.Model == model then
+			self:_removeCharacter(character)
+		end
+	end))
+
+	if player.Character then
+		task.spawn(self._onCharacterAdded, self, player, player.Character)
+	end
+end
+
+--[=[
+	@priv
+]=]
+function CharacterController._unwatchPlayer(self: CharacterController, player: Player)
+	local character = self._characters[player]
+	if character then
+		self:_removeCharacter(character)
+	end
+
+	local janitor = self._playerJanitors[player]
+	if janitor then
+		self._playerJanitors[player] = nil
+		janitor:Destroy()
+	end
+end
+
+--[=[
+	@priv
+]=]
+function CharacterController._onCharacterAdded(self: CharacterController, player: Player, model: Model)
+	local config = Config.get()
+
+	local parts, missing = waitForParts(model, config.CHARACTER.LOAD_TIMEOUT)
+
+	-- The player may have respawned or left while we were waiting
+	if player.Character ~= model or not self._playerJanitors[player] then
 		return
+	end
+
+	if not parts then
+		warn(
+			`[{script.Name}] Character "{model:GetFullName()}" didn't load within {config.CHARACTER.LOAD_TIMEOUT}s, missing one of: {missing}`
+		)
+		return
+	end
+
+	local previous = self._characters[player]
+	if previous then
+		if previous.Model == model then
+			return
+		end
+
+		self:_removeCharacter(previous)
+	end
+
+	local isLocal = IS_CLIENT and player == Players.LocalPlayer
+	local character = CharacterClass.new(player, parts, isLocal)
+
+	-- Backstop for Models destroyed without CharacterRemoving firing
+	character.Janitor:Add(model.Destroying:Connect(function()
+		self:_removeCharacter(character)
+	end))
+
+	self._characters[player] = character
+
+	if isLocal then
+		self.LocalCharacterObject = character
 	end
 
 	if IS_SERVER then
-		local objects = EntityController:ConstructBlank({
-			Type = "Character",
-			Id = tostring(player.UserId),
-		})
-
-		local entity, characterObject: Character? = objects and objects.Entity, objects and objects.Object
-		if not entity or not characterObject then
-			warn(`[{script.Name}] Failed to construct "Entity" or "Character"`)
-			return
-		end
-
-		-- Initialize the Character before entity registration so the Actor is prepared
-		characterObject:Init(runtimeDefinition)
-
-		-- We must setup the primary part of both the entity container and the character container
-		entity.Model.PrimaryPart = runtimeDefinition.Root
-		characterObject.Agent:GetModel().PrimaryPart = runtimeDefinition.Root
-
-		character.Parent = characterObject.Entity.Model
-
-		EntityController:RegisterExisting({
-			Type = characterObject.Entity.Type,
-			Object = characterObject,
-			Entity = entity,
-			Parent = workspace,
-			-- Parent = self.CharacterContainer,
-		})
-
-		character:AddTag(config.TAGS.CHARACTER)
+		model:AddTag(config.TAGS.CHARACTER)
 	end
 
 	if config.LOGGING.CHARACTER then
-		print(`[{script.Name}] Character added: `, character)
+		print(`[{script.Name}] Character added: `, model)
+	end
+
+	self.CharacterAdded:Fire(character)
+
+	if isLocal then
+		self.LocalCharacterAdded:Fire(character)
 	end
 end
 
 --[=[
-    @priv
+	@priv
 ]=]
-function CharacterController._onCharacterRemoving(self: CharacterController, character: Model, isLocal: boolean?)
-	local config = Config.get()
-
-	if isLocal and self.LocalCharacter and self.LocalCharacter.Agent:GetModel() == character then
-		self.LocalCharacter = nil
+function CharacterController._removeCharacter(self: CharacterController, character: CharacterObject)
+	if self._characters[character.Player] ~= character then
+		return
 	end
 
-	if config.LOGGING.CHARACTER then
-		print(`[{script.Name}] Character removing: `, character)
+	self._characters[character.Player] = nil
+
+	if self.LocalCharacterObject == character then
+		self.LocalCharacterObject = nil
 	end
-end
 
---[=[
-	@priv 
-]=]
-function CharacterController._bindCharacterEventsToEntity(self: CharacterController)
-	EntityController.EntitySpawned:Connect(function(entity: EntityController.Entity, character: Character)
-		if entity.Type ~= "Character" then
-			return
-		end
-
-		if
-			IS_CLIENT
-			and Players.LocalPlayer.Character
-			and Players.LocalPlayer.Character == character.Agent:GetModel()
-		then
-			self.LocalCharacter = character
-			character.IsLocal = true
-		end
-
-		local player = getPlayerFromCharacter(character)
-		if player then
-			self._playerToCharacter[player] = character
-		end
-
-		self.CharacterAdded:Fire(character)
-
-		if character.IsLocal then
-			self.LocalCharacterAdded:Fire(character)
-		end
-	end)
-
-	EntityController.EntityDestroyed:Connect(function(entity: EntityController.Entity, character: Character)
-		if entity.Type == "Character" then
-			local player = getPlayerFromCharacter(character)
-			if player and self._playerToCharacter[player] == character then
-				self._playerToCharacter[player] = nil
-			end
-
-			self.CharacterRemoved:Fire(character)
-
-			if character.IsLocal then
-				self.LocalCharacterRemoved:Fire(character)
-			end
-		end
-	end)
-end
-
---[=[
-	@priv 
-]=]
-function CharacterController._bindPlayers(self: CharacterController)
-	ValidateDisabledController("CHARACTER")
-
-	local config = Config.get()
-
-	if IS_CLIENT then
-		local player = Players.LocalPlayer
-
-		for _, v in CollectionService:GetTagged(config.TAGS.CHARACTER) do
-			if v:IsA("Model") then
-				local isLocal = player.Character and player.Character == v
-				self:_onCharacterAdded(v, isLocal)
-			end
-		end
-
-		CollectionService:GetInstanceAddedSignal(config.TAGS.CHARACTER):Connect(function(character: Instance)
-			if character:IsA("Model") then
-				local isLocal = player.Character and player.Character == character
-				self:_onCharacterAdded(character, isLocal)
-			end
-		end)
-
-		CollectionService:GetInstanceRemovedSignal(config.TAGS.CHARACTER):Connect(function(character: Instance)
-			if character:IsA("Model") then
-				local isLocal = player.Character and player.Character == character
-				self:_onCharacterRemoving(character, isLocal)
-			end
-		end)
-
-		EntityController.EntitySpawned:Connect(function(entity: EntityController.Entity, character: Character)
-			if entity.Type == "Character" and player.Character and character.Agent:GetModel() == player.Character then
-				self.LocalCharacter = character
-			end
-		end)
-	else
-		Players.PlayerAdded:Connect(function(player: Player)
-			if player.Character then
-				task.spawn(function()
-					self:_onCharacterAdded(player.Character, false)
-				end)
-			end
-
-			player.CharacterAdded:Connect(function(character: Model)
-				self:_onCharacterAdded(character, false)
-			end)
-		end)
-
-		Players.PlayerRemoving:Connect(function(player: Player)
-			if player.Character then
-				self:_onCharacterRemoving(player.Character, false)
-			end
-		end)
+	if Config.get().LOGGING.CHARACTER then
+		print(`[{script.Name}] Character removed: `, character.Model)
 	end
+
+	self.CharacterRemoved:Fire(character)
+
+	if character.IsLocal then
+		self.LocalCharacterRemoved:Fire(character)
+	end
+
+	character:Destroy()
 end
 
 return CharacterController

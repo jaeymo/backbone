@@ -46,8 +46,6 @@ export type GenericSpawnContext<T> = Types.GenericSpawnContext<T>
 export type RegistrationContext = Types.RegistrationContext
 export type SpawnContext = Types.SpawnContext
 
-export type Agent = Types.Agent
-
 export type ClientControllers = Types.ClientControllers
 export type ServerControllers = Types.ServerControllers
 export type SharedControllers = Types.SharedControllers
@@ -55,8 +53,9 @@ export type SharedControllers = Types.SharedControllers
 export type Direction = Types.Direction
 export type CharacterController = Types.CharacterController
 export type DirectionalModes = Types.DirectionalModes
-export type CharacterRuntimeBuildDefinition = Types.CharacterRuntimeBuildDefinition
-export type Character = Types.Character
+export type CharacterObject = Types.CharacterObject
+--- @deprecated Renamed to `CharacterObject`.
+export type Character = Types.CharacterObject
 
 export type AnimationDefinition = Types.AnimationDefinition
 export type AnimationVariantTable = Types.AnimationVariantTable
@@ -94,6 +93,7 @@ export type InputController = Types.InputController
 
 export type PhysicsObject = Types.PhysicsObject
 export type PhysicsController = Types.PhysicsController
+export type CollisionMatrix = Types.CollisionMatrix
 export type InterfaceLayer = Types.InterfaceLayer
 export type InterfaceRegistration = Types.InterfaceRegistration
 export type InterfaceEntry = Types.InterfaceEntry

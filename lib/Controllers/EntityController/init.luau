@@ -1,4 +1,49 @@
 --!strict
+--[=[
+	EntityController
+
+	Server-authoritative world objects that replicate to clients. An Entity is an Id, a Guid, a
+	Type and a container Model. Each registered Type has a Class whose objects wrap the
+	Entity. The server constructs and spawns entities; each client rebuilds its own object for
+	every entity that replicates to it.
+
+	```lua
+	-- Shared: register the Type on both server and client
+	EntityController:RegisterType("Mob", {
+		Class = MobClass, -- MobClass.new(entity, definition) -> object with :Destroy()
+		BeforeSpawn = function(context) end, -- optional, runs before the entity is placed
+	})
+
+	-- Server
+	local constructed = EntityController:ConstructBlank({
+		Type = "Mob",
+		Id = "mob:goblin",
+		Definition = { Level = 3 }, -- JSON-encoded to the client, so no Instances
+	})
+
+	if constructed then
+		EntityController:SpawnAt({
+			Type = "Mob",
+			Entity = constructed.Entity,
+			Object = constructed.Object,
+			CFrame = CFrame.new(0, 5, 0),
+			Parent = workspace.Mobs,
+		})
+	end
+
+	-- Either side
+	EntityController.EntitySpawned:Connect(function(entity, object) end)
+	EntityController.EntityDestroyed:Connect(function(entity, object) end)
+	local object = EntityController:GetObjectByModel(model)
+	EntityController:ForAllFromType("Mob", function(entity, object) end)
+	```
+
+	Things to know:
+	- Entities sit in `ReplicatedStorage[ENTITY.PROXY_FOLDER_NAME]` until spawned.
+	- Destroying the entity's Model (or removing its `TAGS.ENTITY` tag) destroys the object and
+	  fires `EntityDestroyed`. `entity.Janitor` owns the Model.
+	- Player characters aren't entities; CharacterController tracks them on its own.
+]=]
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")

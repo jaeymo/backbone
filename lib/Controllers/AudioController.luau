@@ -1,4 +1,19 @@
 --!strict
+--[=[
+	AudioController
+
+	Plays Sounds by name. Every Sound under `AUDIO.SOURCES` is registered by its Name on Awake.
+	Each play clones the Sound, so overlapping plays don't cut each other off. A function in
+	`AUDIO.RESOLVERS[name]` can replace the lookup and return one or more requests built from
+	`options.Context`.
+
+	```lua
+	AudioController:Play("UIClick")
+	AudioController:PlayAt("Explosion", position)
+	AudioController:PlayOn("Footstep", character.Root, { Properties = { Volume = 0.5 } })
+	AudioController:RegisterAudio("Custom", someSound)
+	```
+]=]
 local SoundService = game:GetService("SoundService")
 
 local root = script.Parent.Parent

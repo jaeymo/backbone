@@ -1,14 +1,15 @@
 --!strict
-local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local root = script.Parent.Parent
+local packages = root.Parent
 
-local Agent = require(root.Classes.Agent)
 local AnimationController = require(root.Controllers.AnimationController)
 local Config = require(root.Core.Config)
+local Janitor = require(packages.Janitor)
 local Types = require(root.Types)
 
+local IS_CLIENT = RunService:IsClient()
 local IS_SERVER = RunService:IsServer()
 
 local ROOT_SOUNDS = {
@@ -23,13 +24,29 @@ local ROOT_SOUNDS = {
 	["Swimming"] = true,
 }
 
+-- Members removed in 0.2.0. Reading one errors with a pointer to its replacement instead of silently returning nil
+local REMOVED_MEMBERS: { [string]: string } = {
+	Agent = "Agent was merged into CharacterObject; use character.Model, .Humanoid, .Root, .Animator and .Janitor",
+	Entity = "CharacterObject is no longer an Entity; see CharacterController's docs for integrating your own Entity system",
+	Init = "CharacterObjects are created and initialized by CharacterController",
+}
+
+export type CharacterObject = Types.CharacterObject
+
+export type CharacterParts = {
+	Model: Model,
+	Humanoid: Humanoid,
+	Root: BasePart,
+	Animator: Animator,
+}
+
 --[=[
 	@priv
 ]=]
 local function countDictionary(dictionary: { [any]: any }): number
 	local count = 0
 
-	for _, v in dictionary do
+	for _ in dictionary do
 		count += 1
 	end
 
@@ -37,40 +54,47 @@ local function countDictionary(dictionary: { [any]: any }): number
 end
 
 local Character = {}
-Character.__index = Character
 
-export type Character = Types.Character
-
-function Character.new(entity: Types.Entity): Character
-	return setmetatable({
-		Entity = entity,
-		IsLocal = false,
-	}, Character) :: Character
-end
-
-function Character.Init(self: Character, runtimeDefinition: Types.CharacterRuntimeBuildDefinition)
-	local config = Config.get()
-
-	local player = Players:GetPlayerFromCharacter(runtimeDefinition.Character)
-	if not player then
-		error(`[{script.Name}] Failed to get player from: {runtimeDefinition.Character}`)
+Character.__index = function(_: CharacterObject, key: string): any
+	local member = (Character :: any)[key]
+	if member ~= nil then
+		return member
 	end
 
-	self.Player = player
+	local hint = REMOVED_MEMBERS[key]
+	if hint then
+		error(`[BACKBONE] CharacterObject.{key} was removed: {hint}`, 2)
+	end
 
-	self.Agent = Agent.new(
-		self.Entity,
-		runtimeDefinition.Character,
-		runtimeDefinition.Root,
-		runtimeDefinition.Humanoid,
-		runtimeDefinition.Animator
-	)
+	return nil
+end
 
-	if not IS_SERVER and config.CHARACTER.ANIMATION_GROUP_ID and config.CHARACTER.ANIMATION_GROUP_ID ~= "" then
-		local animationComponent =
-			AnimationController.new(config.CHARACTER.ANIMATION_GROUP_ID, self.Agent:GetAnimator())
+function Character.new(player: Player, parts: CharacterParts, isLocal: boolean): CharacterObject
+	local config = Config.get()
 
-		self.Animation = animationComponent
+	local self = setmetatable({
+		Player = player,
+		Model = parts.Model,
+		Humanoid = parts.Humanoid,
+		Root = parts.Root,
+		Animator = parts.Animator,
+		Animation = nil,
+		IsLocal = isLocal,
+		Janitor = Janitor.new(),
+		_destroyed = false,
+	}, Character) :: any
+
+	local groupId = config.CHARACTER.ANIMATION_GROUP_ID
+
+	-- Remote characters animate from their owner's client, so only the local character needs an animation group
+	if IS_CLIENT and isLocal and config.ENABLED_CONTROLLERS.ANIMATION and groupId ~= "" then
+		-- A group still bound to a previous life's animator can't be rebound, so replace it
+		local existing = AnimationController.Objects[groupId]
+		if existing and existing.Animator ~= nil and existing.Animator ~= parts.Animator then
+			AnimationController:Destroy(groupId)
+		end
+
+		self.Animation = AnimationController.new(groupId, parts.Animator)
 	end
 
 	if IS_SERVER and config.CHARACTER.BIND_TO_COLLISION_GROUP then
@@ -80,21 +104,34 @@ function Character.Init(self: Character, runtimeDefinition: Types.CharacterRunti
 	if config.CHARACTER.DESTROY_ROOT_SOUNDS then
 		self:_destroyRootSounds()
 	end
+
+	return self :: CharacterObject
 end
 
-function Character.Destroy(self: Character)
-	if self.Animation then
-		self.Animation:Destroy()
+--[=[
+	Cleans up everything tied to this character's lifetime, including `Janitor`.
+	CharacterController calls this when the character is removed; you don't need to.
+	The Roblox Model is left alone since Roblox owns its lifetime.
+]=]
+function Character.Destroy(self: CharacterObject)
+	if self._destroyed then
+		return
 	end
 
-	self.Agent:Destroy()
-	self.Entity:Destroy()
+	self._destroyed = true
+
+	local animation = self.Animation
+	if animation and AnimationController.Objects[animation.GroupId] == animation then
+		AnimationController:Destroy(animation.GroupId)
+	end
+
+	self.Janitor:Destroy()
 end
 
 --[=[
 	@priv
 ]=]
-function Character._watchCollisionGroup(self: Character)
+function Character._watchCollisionGroup(self: CharacterObject)
 	local config = Config.get()
 
 	local function setCollisionGroup(part: BasePart)
@@ -102,20 +139,23 @@ function Character._watchCollisionGroup(self: Character)
 		part.CollisionGroup = isRoot and config.COLLISION_GROUPS.CHARACTER_ROOT or config.COLLISION_GROUPS.CHARACTER
 	end
 
-	for _, v in self.Agent:GetModel():GetDescendants() do
+	for _, v in self.Model:GetDescendants() do
 		if v:IsA("BasePart") then
 			setCollisionGroup(v)
 		end
 	end
 
-	self.Entity.Janitor:Add(self.Agent:GetModel().DescendantAdded:Connect(function(descendant: Instance)
+	self.Janitor:Add(self.Model.DescendantAdded:Connect(function(descendant: Instance)
 		if descendant:IsA("BasePart") then
 			setCollisionGroup(descendant)
 		end
 	end))
 end
 
-function Character._destroyRootSounds(self: Character)
+--[=[
+	@priv
+]=]
+function Character._destroyRootSounds(self: CharacterObject)
 	local marked = {} :: { [string]: boolean }
 	local cleaned = false
 
@@ -124,15 +164,14 @@ function Character._destroyRootSounds(self: Character)
 			descendant:Destroy()
 			marked[descendant.Name] = true
 
-			local markedLength, rootSoundsLength = countDictionary(marked), countDictionary(ROOT_SOUNDS)
-			if markedLength >= rootSoundsLength then
+			if countDictionary(marked) >= countDictionary(ROOT_SOUNDS) then
 				cleaned = true
-				self.Agent.Janitor:Remove("DestroyRootSounds")
+				self.Janitor:Remove("DestroyRootSounds")
 			end
 		end
 	end
 
-	for _, v in self.Agent:GetRoot():GetDescendants() do
+	for _, v in self.Root:GetDescendants() do
 		handleDescendant(v)
 	end
 
@@ -140,13 +179,7 @@ function Character._destroyRootSounds(self: Character)
 		return
 	end
 
-	self.Agent.Janitor:Add(
-		self.Agent:GetRoot().DescendantAdded:Connect(function(descendant: Instance)
-			handleDescendant(descendant)
-		end),
-		nil,
-		"DestroyRootSounds"
-	)
+	self.Janitor:Add(self.Root.DescendantAdded:Connect(handleDescendant), nil, "DestroyRootSounds")
 end
 
 return Character

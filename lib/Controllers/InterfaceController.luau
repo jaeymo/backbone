@@ -1,66 +1,103 @@
 --!strict
 --[=[
+	InterfaceController (client only)
 
-    ============= EXAMPLE USAGE =============
+	Registers GUI elements by name and owns opening and closing them. It handles mutually
+	exclusive menus (Groups), draw order (Layers), per-open cleanup (`entry.Janitor`) and
+	open/close signals, so the rest of your code only deals with names.
 
-    Layers, lowest to highest: Effects < HUD < Menu < PopUp < Toast < Tooltip < Mask < Overlay.
-    Everything below Mask is hidden by a fade to black; Overlay draws above it.
+	Registering. `Instance` is the GuiObject that gets shown or hidden. Its starting
+	`Visible` value decides whether it starts open.
 
-```lua
-    -- Effects: full-screen, non-interactive visuals behind the HUD
-    InterfaceController:Register("LowHealthVignette", {
-        Instance = effects.LowHealthVignette.Root,
-        Layer = "Effects",
-    })
+	```lua
+	InterfaceController:Register("Inventory", {
+		Instance = playerGui.Menus.Inventory,
+		Group = "Menus", -- optional: only one interface per Group is open at a time
+		Layer = "Menu",  -- optional: defaults to "HUD"
 
-    -- HUD: always-on gameplay info. No group, pieces coexist
-    InterfaceController:Register("AmmoCounter", {
-        Instance = hud.AmmoCounter.Root,
-        Layer = "HUD",
-    })
+		-- `...` is whatever was passed to :Open() / :Toggle()
+		OnOpen = function(entry, tab: string?)
+			selectTab(tab or "Weapons")
 
-    -- Menu: panels the player opens. Shared group => opening one closes the others
-    InterfaceController:Register("Inventory", {
-        Instance = menus.Inventory.Root,
-        Group = "Menus",
-        Layer = "Menu",
-    })
+			-- Anything added to entry.Janitor is cleaned up when the interface closes
+			entry.Janitor:Add(InputController:BindAction("Back", function(state)
+				if state == "Began" then
+					InterfaceController:Close("Inventory")
+				end
+			end))
+		end,
 
-    -- PopUp: dialogs that need an answer. Not in "Menus", so it opens over a menu without closing it
-    InterfaceController:Register("DropAllConfirm", {
-        Instance = popups.DropAllConfirm.Root,
-        Layer = "PopUp",
-    })
+		OnClose = function(entry)
+			saveLayout()
+		end,
+	})
+	```
 
-    -- Toast: brief, non-blocking notices that dismiss themselves. No group
-    InterfaceController:Register("KillFeed", {
-        Instance = toasts.KillFeed.Root,
-        Layer = "Toast",
-        OnOpen = function(entry)
-            entry.Janitor:Add(task.delay(2, function()
-                InterfaceController:Close("KillFeed")
-            end))
-        end,
-    })
+	Opening and closing:
 
-    -- Tooltip: follows the cursor, never interactive (item hover stats, dragged item icon)
-    InterfaceController:Register("ItemTooltip", {
-        Instance = tooltips.ItemTooltip.Root,
-        Layer = "Tooltip",
-    })
+	```lua
+	InterfaceController:Open("Inventory", "Armor") -- extra arguments go to OnOpen
+	InterfaceController:Close("Inventory")
+	InterfaceController:Toggle("Inventory")        -- also forwards arguments when opening
 
-    -- Mask: the full-screen frame UIMaskController fades (death, teleport, scene change)
-    InterfaceController:Register("Mask", {
-        Instance = masks.Mask.Root,
-        Layer = "Mask",
-    })
+	InterfaceController:Open("Shop")               -- same Group: Inventory closes first
+	InterfaceController:GetOpenInGroup("Menus")    --> "Shop"
+	InterfaceController:CloseGroup("Menus")        -- closes whichever menu is open
 
-    -- Overlay: must stay readable above the mask ("YOU DIED", loading text, fatal errors)
-    InterfaceController:Register("DeathText", {
-        Instance = overlays.DeathText.Root,
-        Layer = "Overlay",
-    })
-```
+	if InterfaceController:IsOpen("Shop") then end
+	```
+
+	Reacting from elsewhere:
+
+	```lua
+	InterfaceController.InterfaceOpened:Connect(function(name: string)
+		if name == "Inventory" then
+			InputController:Block("Combat")
+		end
+	end)
+
+	InterfaceController.InterfaceClosed:Connect(function(name: string)
+		if name == "Inventory" then
+			InputController:Unblock("Combat")
+		end
+	end)
+	```
+
+	Common shapes:
+
+	```lua
+	-- Always-on HUD piece: no Group, so it coexists with everything
+	InterfaceController:Register("AmmoCounter", { Instance = hud.AmmoCounter, Layer = "HUD" })
+
+	-- Confirmation dialog: no Group, so it opens over a menu without closing it
+	InterfaceController:Register("DropAllConfirm", { Instance = popups.DropAllConfirm, Layer = "PopUp" })
+
+	-- Self-dismissing toast: the delay is cancelled if it's closed early
+	InterfaceController:Register("Notice", {
+		Instance = toasts.Notice,
+		Layer = "Toast",
+		OnOpen = function(entry, text: string)
+			toasts.Notice.Label.Text = text
+			entry.Janitor:Add(task.delay(3, function()
+				InterfaceController:Close("Notice")
+			end))
+		end,
+	})
+	```
+
+	Layers, lowest to highest: Effects < HUD < Menu < PopUp < Toast < Tooltip < Mask < Overlay.
+	Use Mask for a full-screen fade (death, teleport) and Overlay for anything that must stay
+	readable above it.
+
+	Things to know:
+	- A Layer is applied to the ScreenGui that contains `Instance` (DisplayOrder, ResetOnSpawn =
+	  false, Sibling ZIndexBehavior). A ScreenGui has one Layer: the first interface registered
+	  in it decides, so keep interfaces on different Layers in different ScreenGuis.
+	- `Visible` changes immediately. OnOpen runs after the interface is shown, and OnClose runs
+	  after it's hidden and after `entry.Janitor` is cleaned.
+	- Opening an interface that's already open does nothing: OnOpen doesn't run again and the
+	  new arguments are ignored. Close it first if you need to re-run OnOpen.
+	- Registering a name twice warns and keeps the first registration.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

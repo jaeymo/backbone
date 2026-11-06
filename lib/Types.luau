@@ -33,7 +33,6 @@ export type BackboneConfig = {
 	PACKETS: { [string]: NetworkPacketConfig },
 
 	TAGS: {
-		AGENT: string,
 		ENTITY: string,
 		CHARACTER: string,
 	},
@@ -87,7 +86,7 @@ export type BackboneConfig = {
 
 	CHARACTER: {
 		ANIMATION_GROUP_ID: string,
-		CLIENT_CHARACTER_MODEL_TIMEOUT: number,
+		LOAD_TIMEOUT: number,
 		DESTROY_ROOT_SOUNDS: boolean,
 		BIND_TO_COLLISION_GROUP: boolean,
 	},
@@ -249,21 +248,6 @@ export type EntityTypeRegistration = {
 	Class: any,
 }
 
-export type Agent = {
-	Entity: Entity,
-	Model: Model,
-	Root: BasePart,
-	Humanoid: Humanoid,
-	Animator: Animator,
-	Janitor: Janitor.Janitor,
-
-	GetModel: (self: Agent) -> Model,
-	GetRoot: (self: Agent) -> BasePart,
-	GetHumanoid: (self: Agent) -> Humanoid,
-	GetAnimator: (self: Agent) -> Animator,
-	Destroy: (self: Agent) -> (),
-}
-
 export type ClientControllers = {
 	InputController: InputController,
 	InterfaceController: InterfaceController,
@@ -409,56 +393,58 @@ export type DirectionalModes = {
 	Default: boolean,
 }
 
-export type Character = {
-	Entity: Entity,
-	Agent: Agent,
-	IsLocal: boolean,
+--- A player's character as tracked by CharacterController. `Model` is the Roblox character Model.
+export type CharacterObject = {
 	Player: Player,
-	Animation: AnimatorClass?,
-
-	Init: (self: Character, runtimeDefinition: CharacterRuntimeBuildDefinition) -> (),
-	Destroy: (self: Character) -> (),
-
-	_watchCollisionGroup: (self: Character) -> (),
-	_destroyRootSounds: (self: Character) -> (),
-}
-
-export type CharacterRuntimeBuildDefinition = {
-	Character: Model,
-	Root: BasePart,
+	Model: Model,
 	Humanoid: Humanoid,
+	Root: BasePart,
 	Animator: Animator,
+	Animation: AnimatorClass?, -- Local character only, when ANIMATION is enabled and CHARACTER.ANIMATION_GROUP_ID is set
+	IsLocal: boolean,
+	Janitor: Janitor.Janitor, -- Cleaned up when the character is removed
+
+	Destroy: (self: CharacterObject) -> (),
+
+	_destroyed: boolean,
+	_watchCollisionGroup: (self: CharacterObject) -> (),
+	_destroyRootSounds: (self: CharacterObject) -> (),
 }
 
 export type Direction = "Left" | "Right" | "Forward" | "Backward"
 
 export type CharacterController = {
-	LocalCharacter: Character?,
-	CharacterContainer: Folder?,
+	LocalCharacterObject: CharacterObject?,
 
-	CharacterAdded: Signal.Signal<Character>,
-	CharacterRemoved: Signal.Signal<Character>,
-	LocalCharacterAdded: Signal.Signal<Character>,
-	LocalCharacterRemoved: Signal.Signal<Character>,
-	IsShiftLocked: (self: CharacterController) -> boolean,
-	GetCharacterForPlayer: (self: CharacterController, player: Player) -> Character?,
-	GetCharacters: (self: CharacterController) -> { Character },
+	CharacterAdded: Signal.Signal<CharacterObject>,
+	CharacterRemoved: Signal.Signal<CharacterObject>,
+	LocalCharacterAdded: Signal.Signal<CharacterObject>,
+	LocalCharacterRemoved: Signal.Signal<CharacterObject>,
+
+	GetLocalCharacter: (self: CharacterController) -> CharacterObject?,
+	GetLocalCharacterAsync: (self: CharacterController) -> Promise.TypedPromise<CharacterObject>,
+	GetCharacterForPlayer: (self: CharacterController, player: Player) -> CharacterObject?,
+	GetCharacterForPlayerAsync: (self: CharacterController, player: Player) -> Promise.TypedPromise<CharacterObject>,
+	GetCharacterFromInstance: (self: CharacterController, instance: Instance) -> CharacterObject?,
+	GetCharacters: (self: CharacterController) -> { CharacterObject },
 
 	BindAddedToPlayer: (
 		self: CharacterController,
 		player: Player,
-		callback: (character: Character) -> ()
+		callback: (character: CharacterObject) -> ()
 	) -> Signal.Connection,
 
-	BindRemovingToPlayer: (
+	BindRemovedToPlayer: (
 		self: CharacterController,
 		player: Player,
-		callback: (character: Character) -> ()
+		callback: (character: CharacterObject) -> ()
 	) -> Signal.Connection,
+
+	IsShiftLocked: (self: CharacterController) -> boolean,
 
 	GetMoveDirection: (
 		self: CharacterController,
-		character: Character,
+		character: CharacterObject,
 		previous: Direction?,
 		directional: DirectionalModes?
 	) -> Direction,
@@ -744,7 +730,8 @@ export type PhysicsController = {
 	ApplyCollisionMatrix: (self: PhysicsController, matrix: CollisionMatrix) -> (),
 }
 
---- matrix [A][B] = true/false, each pair only has to be declared once
+--- matrix[A][B] = true enables collision between A and B. Undeclared pairs of different groups named in the
+--- matrix are non-collidable; A <-> A is only changed when declared. Each pair only has to be declared once.
 export type CollisionMatrix = { [string]: { [string]: boolean } }
 
 export type InterfaceLayer = "Effects" | "HUD" | "Menu" | "PopUp" | "Toast" | "Tooltip" | "Mask" | "Overlay"

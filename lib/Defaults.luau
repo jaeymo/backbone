@@ -38,7 +38,6 @@ local BACKBONE_DEFAULTS: Types.BackboneConfig = {
 	},
 
 	TAGS = {
-		AGENT = "Agent",
 		ENTITY = "Entity",
 		CHARACTER = "Character",
 	},
@@ -71,7 +70,7 @@ local BACKBONE_DEFAULTS: Types.BackboneConfig = {
 
 	CHARACTER = {
 		ANIMATION_GROUP_ID = "Character", -- The id passed to AnimationController.new()
-		CLIENT_CHARACTER_MODEL_TIMEOUT = 10,
+		LOAD_TIMEOUT = 10, -- Seconds to wait for a character's Humanoid, HumanoidRootPart and Animator before giving up
 		BIND_TO_COLLISION_GROUP = true, -- Should the CharacterController update character collision groups based on the config?
 		DESTROY_ROOT_SOUNDS = true, -- Should the Character destroy it's root sounds?,
 	},
@@ -92,6 +91,7 @@ local BACKBONE_DEFAULTS: Types.BackboneConfig = {
 	},
 
 	PHYSICS = {
+		-- { [GroupA] = { [GroupB] = true } }. Undeclared pairs of different groups named here are non-collidable
 		COLLISION_MATRIX = {},
 	},
 }
